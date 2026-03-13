@@ -1,0 +1,136 @@
+{
+  "projectType": "saas",
+  "projectName": "SMyEG",
+  "projectDescription": "Sistema de Monitoreo y Evaluación Geoespacial - Full-stack platform for forest patrimony management and geospatial monitoring",
+  "theme": "palm",
+  "primaryColor": "#2d6a4f",
+  "lightColor": "#52b788",
+  "darkColor": "#1b4332",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/authentication",
+              "features/organizations",
+              "features/forest-patrimony",
+              "features/geospatial-import",
+              "features/biological-assets",
+              "features/land-accounting"
+            ]
+          },
+          {
+            "group": "User Guides",
+            "pages": [
+              "guides/user-management",
+              "guides/roles-permissions",
+              "guides/shapefile-import",
+              "guides/measurement-campaigns",
+              "guides/workers"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/database",
+              "configuration/forest-config",
+              "configuration/system-settings"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/auth/login",
+              "api/auth/session",
+              "api/auth/organizations"
+            ]
+          },
+          {
+            "group": "Forest Patrimony",
+            "pages": [
+              "api/forest/patrimony",
+              "api/forest/geo-import",
+              "api/forest/config"
+            ]
+          },
+          {
+            "group": "Assets",
+            "pages": [
+              "api/assets/measurement-campaigns",
+              "api/assets/observations",
+              "api/assets/calculations"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "api/admin/users",
+              "api/admin/roles",
+              "api/admin/organizations",
+              "api/admin/audit"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/pm2",
+              "deployment/production"
+            ]
+          },
+          {
+            "group": "Maintenance",
+            "pages": [
+              "maintenance/migrations",
+              "maintenance/monitoring",
+              "maintenance/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-organization forest patrimony management with hierarchical levels (Nivel 2/3/4/5)",
+    "Geospatial shapefile import and processing with background workers",
+    "Biological asset measurement campaigns and observations",
+    "Land use tracking and variation monitoring",
+    "Role-based access control (RBAC) with CASL permissions",
+    "Audit logging and analytics dashboards"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/login - User authentication",
+    "GET /api/auth/session - Get current session",
+    "GET /api/organizations - List organizations",
+    "POST /api/forest/patrimony - Create forest patrimony record",
+    "POST /api/forest/geo/import - Import shapefile",
+    "GET /api/forest/geo/jobs - List geo import jobs",
+    "POST /api/assets/measurement-campaigns - Create measurement campaign",
+    "GET /api/assets/measurement-observations - List observations",
+    "POST /api/users - Create user",
+    "GET /api/roles - List roles",
+    "GET /api/audit - Audit log entries"
+  ]
+}
