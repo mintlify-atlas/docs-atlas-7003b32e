@@ -1,0 +1,471 @@
+---
+title: 'Organizations'
+description: 'Retrieve and manage user organization access'
+---
+
+## Overview
+
+Users in SMyEG can have access to multiple organizations. Organization access is determined by role assignments and user status.
+
+---
+
+## Organization Access Control
+
+Organization access is managed through two primary functions:
+
+### getAuthorizedOrganizationsForUser
+
+Retrieves the list of organizations a user can access based on their roles and assignments.
+
+#### Access Rules
+
+1. **Super Admin Users**
+   - Can access ALL active organizations in the system
+   - Determined by having an active `SUPER_ADMIN` role
+
+2. **Organization Users**
+   - Can access organizations where they have active role assignments
+   - Role must be active and associated with an active organization
+
+3. **Fallback Organization**
+   - Users can access their primary organization (`user.organizationId`)
+   - Added automatically if not already in the authorized list
+
+#### TypeScript Definition
+
+```typescript
+export type AuthorizedOrganization = {
+  id: string;
+  name: string;
+};
+
+export async function getAuthorizedOrganizationsForUser(
+  userId: string,
+  fallbackOrganizationId?: string | null
+): Promise<AuthorizedOrganization[]>
+```
+
+#### Parameters
+
+<ParamField path="userId" type="string" required>
+  User's unique identifier
+</ParamField>
+
+<ParamField path="fallbackOrganizationId" type="string | null">
+  Optional fallback organization ID (typically from `user.organizationId`)
+</ParamField>
+
+#### Response
+
+Returns an array of organizations sorted alphabetically by name:
+
+<ResponseField name="id" type="string">
+  Organization unique identifier
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Organization name
+</ResponseField>
+
+#### Example Usage
+
+```typescript Server-Side
+import { getAuthorizedOrganizationsForUser } from '@/lib/auth-organizations';
+import { auth } from '@/lib/auth';
+
+export async function GET() {
+  const session = await auth();
+  
+  if (!session?.user?.id) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  const organizations = await getAuthorizedOrganizationsForUser(
+    session.user.id,
+    session.user.organizationId
+  );
+
+  return Response.json({ organizations });
+}
+```
+
+---
+
+## getAuthorizedOrganizationCards
+
+Retrieves detailed organization information including branding assets for display in the UI.
+
+### TypeScript Definition
+
+```typescript
+export type AuthorizedOrganizationCard = {
+  id: string;
+  name: string;
+  logoUrl: string | null;
+  siteTitle: string | null;
+};
+
+export async function getAuthorizedOrganizationCards(
+  userId: string,
+  fallbackOrganizationId?: string | null
+): Promise<AuthorizedOrganizationCard[]>
+```
+
+### Parameters
+
+<ParamField path="userId" type="string" required>
+  User's unique identifier
+</ParamField>
+
+<ParamField path="fallbackOrganizationId" type="string | null">
+  Optional fallback organization ID
+</ParamField>
+
+### Response
+
+Returns enriched organization data with branding information:
+
+<ResponseField name="id" type="string">
+  Organization unique identifier
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Organization name
+</ResponseField>
+
+<ResponseField name="logoUrl" type="string | null">
+  URL to the organization's logo image, or null if not set
+</ResponseField>
+
+<ResponseField name="siteTitle" type="string | null">
+  Custom site title from system configuration (`site_title` or `site_name`), or null if not configured
+</ResponseField>
+
+### Site Title Resolution
+
+The function queries the `SystemConfiguration` table for each organization:
+
+- Looks for `category: "general"` and `key: "site_title"` or `key: "site_name"`
+- Prefers `site_title` over `site_name` if both exist
+- Returns `null` if neither configuration is found
+
+### Example Usage
+
+```typescript Organization Selector
+import { getAuthorizedOrganizationCards } from '@/lib/auth-organizations';
+
+export async function OrganizationSelector({ userId }: { userId: string }) {
+  const organizations = await getAuthorizedOrganizationCards(userId, null);
+
+  return (
+    <div>
+      {organizations.map((org) => (
+        <div key={org.id} className="org-card">
+          {org.logoUrl && (
+            <img src={org.logoUrl} alt={org.name} />
+          )}
+          <h3>{org.siteTitle || org.name}</h3>
+          <p>{org.name}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+---
+
+## POST /api/auth/organization-options
+
+API endpoint that validates credentials and returns available organizations. See [Login](/api/auth/login) for full documentation.
+
+### Request Body
+
+<ParamField body="identifier" type="string" required>
+  User's email or username
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Request success indicator
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <ResponseField name="organizations" type="AuthorizedOrganizationCard[]">
+    Array of organization cards with branding information
+  </ResponseField>
+  <ResponseField name="email" type="string">
+    User's email address
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash cURL
+curl -X POST https://api.smyeg.com/api/auth/organization-options \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier": "user@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "organizations": [
+      {
+        "id": "org_123456",
+        "name": "Acme Forest Corporation",
+        "logoUrl": "https://cdn.smyeg.com/logos/acme.png",
+        "siteTitle": "Acme Forest Management Platform"
+      },
+      {
+        "id": "org_789012",
+        "name": "Green Valley Forestry",
+        "logoUrl": "https://cdn.smyeg.com/logos/greenvalley.png",
+        "siteTitle": "Green Valley Operations"
+      },
+      {
+        "id": "org_345678",
+        "name": "Regional Office North",
+        "logoUrl": null,
+        "siteTitle": null
+      }
+    ],
+    "email": "user@example.com"
+  }
+}
+```
+
+---
+
+## Implementation Details
+
+### Database Schema
+
+Organization access relies on the following database relationships:
+
+```typescript Prisma Schema (Simplified)
+model User {
+  id             String  @id
+  email          String  @unique
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId])
+  userRoles      UserRole[]
+}
+
+model Organization {
+  id        String   @id
+  name      String
+  logoUrl   String?
+  isActive  Boolean
+  deletedAt DateTime?
+  roles     Role[]
+  users     User[]
+}
+
+model Role {
+  id             String   @id
+  slug           String
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId])
+  isActive       Boolean
+  userRoles      UserRole[]
+}
+
+model UserRole {
+  id       String  @id
+  userId   String
+  roleId   String
+  isActive Boolean
+  user     User    @relation(fields: [userId])
+  role     Role    @relation(fields: [roleId])
+}
+
+model SystemConfiguration {
+  id             String  @id
+  organizationId String?
+  category       String
+  key            String
+  value          String?
+}
+```
+
+### Query Logic
+
+#### Super Admin Check
+
+```typescript
+const hasSuperAdminRole = await prisma.userRole.findFirst({
+  where: {
+    userId,
+    isActive: true,
+    role: {
+      isActive: true,
+      slug: "SUPER_ADMIN",
+    },
+  },
+});
+
+if (hasSuperAdminRole) {
+  // Return all active organizations
+  return await prisma.organization.findMany({
+    where: { isActive: true, deletedAt: null },
+    orderBy: { name: "asc" },
+  });
+}
+```
+
+#### Role-Based Access
+
+```typescript
+const assignments = await prisma.userRole.findMany({
+  where: {
+    userId,
+    isActive: true,
+    role: {
+      isActive: true,
+      organizationId: { not: null },
+      organization: {
+        isActive: true,
+        deletedAt: null,
+      },
+    },
+  },
+  include: {
+    role: {
+      include: { organization: true },
+    },
+  },
+});
+```
+
+### Deduplication
+
+Organizations are deduplicated using a Map to prevent duplicates when users have multiple roles in the same organization:
+
+```typescript
+const deduped = new Map<string, AuthorizedOrganization>();
+for (const organization of organizations) {
+  deduped.set(organization.id, organization);
+}
+
+return Array.from(deduped.values()).sort((a, b) => 
+  a.name.localeCompare(b.name)
+);
+```
+
+<Note>
+  Organizations are always returned in alphabetical order by name, regardless of the order in which they were retrieved from the database.
+</Note>
+
+---
+
+## Multi-Organization Workflows
+
+### Login Organization Selection
+
+1. User enters credentials
+2. System validates credentials via `/api/auth/organization-options`
+3. User selects organization from returned list
+4. Validates organization access via `/api/auth/login-validation`
+5. Creates session with selected organization context
+
+### Organization Switching
+
+To switch organizations, users must:
+
+1. Sign out of current session
+2. Sign in again and select different organization
+
+<Warning>
+  Organization context is stored in the JWT session token and cannot be changed without re-authentication. This is a security measure to ensure audit trails remain accurate.
+</Warning>
+
+### Code Example: Complete Login Flow
+
+```typescript TypeScript - Login Component
+import { useState } from 'react';
+import { signIn } from 'next-auth/react';
+
+export default function LoginForm() {
+  const [step, setStep] = useState<'credentials' | 'organization'>('credentials');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [organizations, setOrganizations] = useState([]);
+  const [selectedOrg, setSelectedOrg] = useState('');
+
+  const handleCredentialSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const response = await fetch('/api/auth/organization-options', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier, password }),
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      setOrganizations(result.data.organizations);
+      setStep('organization');
+    }
+  };
+
+  const handleOrganizationSelect = async (orgId: string) => {
+    await signIn('credentials', {
+      identifier,
+      password,
+      organizationId: orgId,
+      callbackUrl: '/dashboard',
+    });
+  };
+
+  if (step === 'credentials') {
+    return (
+      <form onSubmit={handleCredentialSubmit}>
+        <input
+          type="text"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder="Email or Username"
+        />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+        />
+        <button type="submit">Continue</button>
+      </form>
+    );
+  }
+
+  return (
+    <div>
+      <h2>Select Organization</h2>
+      {organizations.map((org) => (
+        <button
+          key={org.id}
+          onClick={() => handleOrganizationSelect(org.id)}
+        >
+          {org.logoUrl && <img src={org.logoUrl} alt={org.name} />}
+          <div>
+            <h3>{org.siteTitle || org.name}</h3>
+            <p>{org.name}</p>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+```

@@ -1,0 +1,491 @@
+---
+title: 'Geospatial Import System'
+description: 'Background processing of shapefile imports with validation and error handling'
+---
+
+## Overview
+
+The geospatial import system handles asynchronous processing of shapefile uploads, enabling users to import forest geometry data with comprehensive validation and error reporting. The system uses background workers to process large datasets without blocking the user interface.
+
+## Import Architecture
+
+### Job-Based Processing
+
+The import system uses a job queue pattern:
+
+```prisma
+model GeoImportJob {
+  id               String               @id @default(uuid())
+  organizationId   String
+  status           GeoImportJobStatus   @default(PENDING)
+  fileName         String
+  storagePath      String
+  totalRecords     Int                  @default(0)
+  processedRecords Int                  @default(0)
+  failedRecords    Int                  @default(0)
+  metadata         Json?
+  errorMessage     String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdById      String?
+  
+  items            GeoImportJobItem[]
+  geometries       ForestGeometryN4[]
+}
+
+enum GeoImportJobStatus {
+  PENDING
+  EXTRACTING
+  VALIDATING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+```
+
+### Background Worker
+
+The worker scheduler runs continuously in `src/workers/geo-worker-scheduler.ts`:
+
+```typescript
+const intervalMs = Number.parseInt(process.env.GEO_WORKER_INTERVAL_MS ?? "4000", 10);
+const importBatchSize = Number.parseInt(process.env.GEO_IMPORT_BATCH_SIZE ?? "5", 10);
+
+async function runBatch() {
+  let importProcessed = 0;
+
+  for (let i = 0; i < importBatchSize; i += 1) {
+    const result = await processNextPendingImportJob();
+    if (!result.processed) {
+      break;
+    }
+    importProcessed += 1;
+  }
+
+  if (importProcessed > 0) {
+    console.info(
+      `[geo-worker] processed import_jobs=${importProcessed}`
+    );
+  }
+}
+```
+
+<Info>
+  The worker runs as a separate Node.js process and can be scaled horizontally for high-volume imports.
+</Info>
+
+## Import Process Flow
+
+<Steps>
+  <Step title="File Upload">
+    User uploads a ZIP file containing shapefile components (.shp, .shx, .dbf, .prj).
+    
+    The system creates a `GeoImportJob` record with status `PENDING`.
+  </Step>
+  
+  <Step title="Worker Pickup">
+    The background worker detects pending jobs and transitions status to `EXTRACTING`.
+  </Step>
+  
+  <Step title="Shapefile Parsing">
+    The worker extracts and parses the shapefile using the `shpjs` library:
+    
+    ```typescript
+    async function parseShapefile(zipBuffer: Buffer): Promise<unknown> {
+      if (!(globalThis as { self?: unknown }).self) {
+        (globalThis as { self?: unknown }).self = globalThis;
+      }
+
+      const module = await import("shpjs");
+      const shp = module.default as (input: ArrayBuffer | Uint8Array | Buffer) => Promise<unknown>;
+      return shp(zipBuffer);
+    }
+    ```
+  </Step>
+  
+  <Step title="Feature Validation">
+    Status transitions to `VALIDATING`. Each feature is validated:
+    
+    - Level 2, 3, and 4 codes must be present
+    - Referenced units must exist in the database
+    - Geometry must be valid (Polygon or MultiPolygon)
+    - Land use names are validated if provided
+  </Step>
+  
+  <Step title="Geometry Processing">
+    Status transitions to `PROCESSING`. Valid features are inserted into `ForestGeometryN4`:
+    
+    - Polygons are converted to MultiPolygons
+    - Centroids are calculated
+    - Areas are computed in hectares
+    - Version management (previous geometries marked inactive)
+  </Step>
+  
+  <Step title="Recalculation Jobs">
+    For each affected Level 4 unit, a `ForestGeometryRecalcJob` is created to update aggregate statistics.
+  </Step>
+  
+  <Step title="Completion">
+    Status transitions to `COMPLETED` (or `FAILED` if errors occurred).
+    
+    Summary statistics are updated:
+    - `totalRecords`
+    - `processedRecords`
+    - `failedRecords`
+  </Step>
+</Steps>
+
+## Field Mapping
+
+The system uses flexible field name mapping to accommodate different shapefile schemas:
+
+```typescript
+const DEFAULT_FIELD_MAP = {
+  level2: ["nivel2", "nivel_2", "cod_n2", "codfinca", "finca", "nivel2_id", "n2"],
+  level3: ["nivel3", "nivel_3", "cod_n3", "codlote", "lote", "nivel3_id", "n3"],
+  level4: ["nivel4", "nivel_4", "cod_n4", "codrodal", "rodal", "nivel4_id", "n4"],
+  currentLandUseName: ["currentlandusename", "usoactual", "uso_actual", "uso", "landuse"],
+  previousLandUseName: ["previouslandusename", "usoanterior", "uso_anterior"],
+  variationDate: ["variationdate", "fechavariacion", "fecha_variacion"],
+  variationNotes: ["variationnotes", "observaciones", "nota", "notas"]
+};
+```
+
+### Field Extraction Logic
+
+```typescript
+function pickStringValue(
+  properties: Record<string, unknown> | null, 
+  candidates: string[]
+): string | null {
+  const normalized = normalizePropertyMap(properties);
+  for (const candidate of candidates) {
+    const value = normalized.get(candidate.toLowerCase());
+    if (value === undefined || value === null) continue;
+    const parsed = String(value).trim();
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function normalizePropertyMap(properties: Record<string, unknown> | null): Map<string, unknown> {
+  const map = new Map<string, unknown>();
+  if (!properties) return map;
+
+  for (const [key, value] of Object.entries(properties)) {
+    map.set(key.toLowerCase(), value);
+  }
+
+  return map;
+}
+```
+
+<Tip>
+  Field names are normalized to lowercase before matching, making the import process case-insensitive.
+</Tip>
+
+## Validation Rules
+
+### Hierarchy Validation
+
+The system ensures hierarchy integrity during import:
+
+```typescript
+// Example validation flow
+const level2Code = pickStringValue(properties, DEFAULT_FIELD_MAP.level2);
+const level3Code = pickStringValue(properties, DEFAULT_FIELD_MAP.level3);
+const level4Code = pickStringValue(properties, DEFAULT_FIELD_MAP.level4);
+
+if (!level2Code || !level3Code || !level4Code) {
+  // Record as failed item
+  await createFailedItem(jobId, featureIndex, "Missing required codes");
+  continue;
+}
+
+// Verify hierarchy exists
+const level4Unit = await prisma.forestPatrimonyLevel4.findFirst({
+  where: {
+    code: level4Code,
+    level3: {
+      code: level3Code,
+      level2: {
+        code: level2Code,
+        organizationId
+      }
+    }
+  },
+  include: {
+    level3: {
+      include: { level2: true }
+    }
+  }
+});
+
+if (!level4Unit) {
+  await createFailedItem(jobId, featureIndex, "Hierarchy not found in database");
+  continue;
+}
+```
+
+### Geometry Validation
+
+```typescript
+function normalizeGeometry(
+  geometry: GeoFeature["geometry"]
+): { type: "MultiPolygon"; coordinates: unknown } | null {
+  if (!geometry) return null;
+
+  if (geometry.type === "Polygon") {
+    return {
+      type: "MultiPolygon",
+      coordinates: [geometry.coordinates]
+    };
+  }
+
+  if (geometry.type === "MultiPolygon") {
+    return {
+      type: "MultiPolygon",
+      coordinates: geometry.coordinates
+    };
+  }
+
+  return null; // Invalid geometry type
+}
+```
+
+<Warning>
+  Only Polygon and MultiPolygon geometries are supported. Point, LineString, and other geometry types will be rejected.
+</Warning>
+
+## Import Job Items
+
+Each feature in the shapefile creates an import job item:
+
+```prisma
+model GeoImportJobItem {
+  id            String              @id @default(uuid())
+  jobId         String
+  featureIndex  Int
+  status        GeoImportItemStatus
+  level2Code    String?
+  level3Code    String?
+  level4Code    String?
+  message       String?
+  rawProperties Json?
+  
+  job           GeoImportJob        @relation(fields: [jobId], references: [id])
+  
+  @@index([jobId, status])
+}
+
+enum GeoImportItemStatus {
+  PROCESSED
+  FAILED
+}
+```
+
+### Error Tracking
+
+Failed items include:
+- **Feature index**: Position in the original shapefile
+- **Error message**: Reason for failure
+- **Raw properties**: Original attribute data for debugging
+- **Extracted codes**: Partial data extracted before failure
+
+## Geometry Versioning
+
+The system maintains geometry history:
+
+```typescript
+// Mark previous geometries as inactive
+await prisma.forestGeometryN4.updateMany({
+  where: {
+    level4Id,
+    isActive: true
+  },
+  data: {
+    isActive: false,
+    validTo: new Date()
+  }
+});
+
+// Insert new geometry
+await prisma.forestGeometryN4.create({
+  data: {
+    organizationId,
+    level2Id,
+    level3Id,
+    level4Id,
+    geom: normalizedGeometry,
+    centroid: calculatedCentroid,
+    superficieHa: calculatedArea,
+    validFrom: new Date(),
+    isActive: true,
+    importJobId: jobId
+  }
+});
+```
+
+<Info>
+  Each geometry import creates a new version while preserving historical geometries with `validTo` timestamps.
+</Info>
+
+## Recalculation Jobs
+
+After geometry import, aggregate statistics need updating:
+
+```prisma
+model ForestGeometryRecalcJob {
+  id             String            @id @default(uuid())
+  organizationId String
+  level4Id       String
+  status         GeoRecalcJobStatus @default(PENDING)
+  attempts       Int               @default(0)
+  runAfter       DateTime          @default(now())
+  lastError      String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  
+  level4         ForestPatrimonyLevel4 @relation(fields: [level4Id], references: [id])
+  
+  @@index([status, runAfter])
+}
+
+enum GeoRecalcJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+```
+
+Recalc jobs update:
+- Level 4 `totalAreaHa` from geometry
+- Level 4 centroid coordinates
+- Level 3 and Level 2 aggregate areas (sum of children)
+
+## Worker Configuration
+
+Configure worker behavior via environment variables:
+
+```bash
+# Worker poll interval (milliseconds)
+GEO_WORKER_INTERVAL_MS=4000
+
+# Number of import jobs to process per batch
+GEO_IMPORT_BATCH_SIZE=5
+
+# Number of recalc jobs to process per batch
+GEO_RECALC_BATCH_SIZE=10
+
+# Run once and exit (useful for testing)
+GEO_WORKER_RUN_ONCE=false
+```
+
+### Running the Worker
+
+```bash
+# Development
+npm run worker:geo
+
+# Production with Docker
+docker-compose up -d geo-worker
+
+# One-time processing
+GEO_WORKER_RUN_ONCE=true npm run worker:geo
+```
+
+## Monitoring and Troubleshooting
+
+### Job Status Tracking
+
+Query import job status:
+
+```typescript
+const job = await prisma.geoImportJob.findUnique({
+  where: { id: jobId },
+  include: {
+    items: {
+      where: { status: 'FAILED' },
+      take: 10
+    }
+  }
+});
+
+console.log(`Status: ${job.status}`);
+console.log(`Progress: ${job.processedRecords}/${job.totalRecords}`);
+console.log(`Failed: ${job.failedRecords}`);
+```
+
+### Common Errors
+
+<AccordionGroup>
+  <Accordion title="Missing Hierarchy Codes">
+    **Error**: "Missing required codes"
+    
+    **Solution**: Ensure shapefile attributes include fields matching the field map (nivel2, nivel3, nivel4 or their variants).
+  </Accordion>
+  
+  <Accordion title="Hierarchy Not Found">
+    **Error**: "Hierarchy not found in database"
+    
+    **Solution**: Create the Level 2, 3, and 4 units in the database before importing geometries. The system does not auto-create units.
+  </Accordion>
+  
+  <Accordion title="Invalid Geometry Type">
+    **Error**: "Unsupported geometry type"
+    
+    **Solution**: Convert Point, LineString, or other geometry types to Polygon or MultiPolygon before import.
+  </Accordion>
+  
+  <Accordion title="Parsing Errors">
+    **Error**: "Failed to parse shapefile"
+    
+    **Solution**: Verify the ZIP contains all required files (.shp, .shx, .dbf, .prj) and is not corrupted.
+  </Accordion>
+</AccordionGroup>
+
+### Worker Logs
+
+The worker outputs structured logs:
+
+```
+[2024-03-13T10:30:00.000Z] [geo-worker] started (interval=4000ms, importBatch=5)
+[2024-03-13T10:30:05.123Z] [geo-worker] processed import_jobs=3 recalc_jobs=8
+[2024-03-13T10:30:10.456Z] [geo-worker] batch error Error: ...
+```
+
+## Performance Optimization
+
+<CardGroup cols={2}>
+  <Card title="Batch Processing" icon="layer-group">
+    Configure `GEO_IMPORT_BATCH_SIZE` based on server resources. Higher values increase throughput but consume more memory.
+  </Card>
+  
+  <Card title="Database Indexing" icon="database">
+    Indexes on `status` and `runAfter` ensure efficient job queries:
+    
+    ```prisma
+    @@index([status, runAfter])
+    ```
+  </Card>
+  
+  <Card title="Parallel Workers" icon="server">
+    Run multiple worker instances for high-volume imports. Each worker claims jobs atomically to avoid conflicts.
+  </Card>
+  
+  <Card title="File Storage" icon="folder">
+    Store uploaded files in object storage (S3, MinIO) for scalability and reliability.
+  </Card>
+</CardGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Forest Patrimony" icon="tree" href="/features/forest-patrimony">
+    Understand the hierarchy that geometries map to
+  </Card>
+  <Card title="Land Accounting" icon="chart-area" href="/features/land-accounting">
+    Track area changes from geometry updates
+  </Card>
+</CardGroup>

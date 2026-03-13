@@ -1,0 +1,407 @@
+---
+title: Database Configuration
+description: PostgreSQL setup, Prisma configuration, migrations, and database extensions
+---
+
+## Overview
+
+SMyEG uses PostgreSQL 15+ with PostGIS for geospatial capabilities and Prisma as the ORM layer. The database includes table partitioning for audit logs and supports UUID-based primary keys.
+
+## PostgreSQL Requirements
+
+| Requirement | Version | Purpose |
+|------------|---------|----------|
+| PostgreSQL | 15+ | Core database |
+| PostGIS | 3.0+ | Geospatial operations |
+| pg_trgm | - | Full-text search |
+| uuid-ossp | - | UUID generation |
+| pgcrypto | - | Cryptographic functions |
+
+## Database Connection
+
+### Connection String Format
+
+```bash
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE"
+```
+
+### Example Configurations
+
+<CodeGroup>
+```bash Local Development
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/app_dev"
+```
+
+```bash Docker Compose
+DATABASE_URL="postgresql://postgres:postgres@postgres:5432/app_dev"
+```
+
+```bash Production
+DATABASE_URL="postgresql://prod_user:secure_password@db.example.com:5432/smyeg_prod?schema=public&sslmode=require"
+```
+</CodeGroup>
+
+## Docker Setup
+
+The project includes a `docker-compose.yml` for local development:
+
+```yaml docker-compose.yml
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
+```
+
+### Start Database Services
+
+```bash
+docker compose up -d
+```
+
+### Stop Database Services
+
+```bash
+docker compose down
+```
+
+## PostgreSQL Extensions
+
+The following extensions are automatically installed during the first migration:
+
+### uuid-ossp
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+```
+Provides functions to generate UUIDs. All primary keys use UUID v4.
+
+### pgcrypto
+```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+```
+Provides cryptographic functions for secure password hashing and encryption.
+
+### pg_trgm
+```sql
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+```
+Enables trigram-based fuzzy text search. Used for full-text search on user names and emails.
+
+### PostGIS
+```sql
+CREATE EXTENSION IF NOT EXISTS "postgis";
+```
+Adds support for geographic objects. Required for:
+- Storing polygon geometries (Level 4 forest units)
+- Coordinate transformation (CRS conversion to EPSG:4326)
+- Spatial calculations (area, centroid, intersection)
+- Geometry validation and repair
+
+## Prisma Configuration
+
+### Schema Definition
+
+The Prisma schema is located at `prisma/schema.prisma`:
+
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+```
+
+### Generate Prisma Client
+
+Generate the Prisma client after schema changes:
+
+```bash
+npm run db:generate
+```
+
+Or directly:
+
+```bash
+prisma generate
+```
+
+## Database Migrations
+
+### Apply Migrations
+
+Run all pending migrations:
+
+```bash
+npm run db:migrate
+```
+
+Or:
+
+```bash
+prisma migrate deploy
+```
+
+### Create New Migration
+
+```bash
+prisma migrate dev --name description_of_change
+```
+
+### Reset Database (Development)
+
+<Warning>
+  This will delete all data and re-apply all migrations.
+</Warning>
+
+```bash
+prisma migrate reset
+```
+
+### Migration History
+
+Migrations are stored in `prisma/migrations/`. Key migrations include:
+
+- `0001_init` - Initial schema with extensions and partitioning
+- `20260302183000_geo_spatial_jobs` - Geospatial import/recalc jobs
+- `20260303041133_forest_geometry_n4` - Level 4 geometry versioning
+- `20260308191500_land_patrimonial_variations` - Land use variations
+- `20260309175919_assets_measurement_smyge` - Asset measurement campaigns
+
+## Database Seeding
+
+Load initial data (roles, permissions, default admin user):
+
+```bash
+npm run db:seed
+```
+
+### Default Admin User
+
+After seeding, you can log in with:
+
+- **Email:** `admin@example.com`
+- **Password:** `Admin1234`
+
+<Warning>
+  Change the default admin password immediately in production environments.
+</Warning>
+
+## Table Partitioning
+
+### Audit Logs Partitioning
+
+The `audit_logs` table uses **monthly range partitioning** by `createdAt` to improve query performance and simplify archiving.
+
+#### Partition Structure
+
+```sql
+CREATE TABLE audit_logs (
+  id UUID NOT NULL,
+  organization_id UUID,
+  user_id UUID,
+  action VARCHAR NOT NULL,
+  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- other columns...
+) PARTITION BY RANGE (created_at);
+```
+
+#### Example Partition
+
+```sql
+CREATE TABLE audit_logs_2026_03
+PARTITION OF audit_logs
+FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');
+```
+
+### Creating New Partitions
+
+Partitions should be created monthly before the new month begins. Use the script:
+
+```bash
+pnpm tsx scripts/create-audit-partition.ts
+```
+
+This creates the next month's partition automatically.
+
+<Info>
+  Consider automating partition creation with a monthly cron job or database scheduler.
+</Info>
+
+### Partition Maintenance
+
+```sql
+-- List all partitions
+SELECT
+  schemaname,
+  tablename,
+  pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+FROM pg_tables
+WHERE tablename LIKE 'audit_logs_%'
+ORDER BY tablename;
+
+-- Drop old partitions (archive data first!)
+DROP TABLE IF EXISTS audit_logs_2025_01;
+```
+
+## Database Triggers
+
+Automatic `updated_at` timestamp triggers are created for tables:
+
+```sql
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+Applied to: `organizations`, `roles`, `modules`, `users`, `user_profiles`, `system_configurations`, etc.
+
+## Full-Text Search
+
+GIN index for user search:
+
+```sql
+CREATE INDEX idx_users_fulltext ON users
+USING gin(to_tsvector('english',
+  coalesce(first_name,'') || ' ' ||
+  coalesce(last_name,'') || ' ' ||
+  coalesce(email,'')
+));
+```
+
+## Geospatial Schema
+
+### Geometry Storage
+
+Level 4 forest patrimony units store geometries using PostGIS:
+
+```prisma
+model ForestGeometryN4 {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  level4Id       String   @db.Uuid
+  geom           Unsupported("geometry(MultiPolygon, 4326)")
+  centroid       Unsupported("geometry(Point, 4326)")
+  superficieHa   Decimal  @db.Decimal(12, 4)
+  validFrom      DateTime @default(now())
+  validTo        DateTime?
+  isActive       Boolean  @default(true)
+}
+```
+
+### Coordinate Reference System
+
+All geometries are stored in **EPSG:4326** (WGS 84):
+
+- **CRS:** EPSG:4326
+- **Type:** MultiPolygon for geometries, Point for centroids
+- **Transformation:** Automatic conversion from source CRS during import
+
+## Performance Optimization
+
+### Indexes
+
+Key indexes for performance:
+
+```sql
+-- Geospatial indexes
+CREATE INDEX idx_forest_geometry_n4_geom ON forest_geometry_n4 USING GIST(geom);
+CREATE INDEX idx_forest_geometry_n4_level4_active ON forest_geometry_n4(level4_id, is_active);
+
+-- Job processing indexes
+CREATE INDEX idx_geo_import_jobs_org_status ON geo_import_jobs(organization_id, status);
+CREATE INDEX idx_geo_recalc_jobs_status_run_after ON forest_geometry_recalc_jobs(status, run_after);
+
+-- Audit log indexes
+CREATE INDEX idx_audit_logs_org_user ON audit_logs(organization_id, user_id, created_at);
+```
+
+### Connection Pooling
+
+Configure Prisma connection pool in production:
+
+```bash
+DATABASE_URL="postgresql://user:pass@host:5432/db?connection_limit=10&pool_timeout=30"
+```
+
+## Backup and Recovery
+
+### Backup Command
+
+```bash
+pg_dump -h localhost -U postgres -d app_dev -F c -f backup_$(date +%Y%m%d).dump
+```
+
+### Restore Command
+
+```bash
+pg_restore -h localhost -U postgres -d app_dev -c backup_20260313.dump
+```
+
+<Warning>
+  Always test backups in a staging environment before production restores.
+</Warning>
+
+## Troubleshooting
+
+### Connection Issues
+
+```bash
+# Test database connection
+psql -h localhost -U postgres -d app_dev
+
+# Check if PostgreSQL is running
+docker compose ps
+
+# View PostgreSQL logs
+docker compose logs postgres
+```
+
+### Migration Failures
+
+```bash
+# Check migration status
+prisma migrate status
+
+# Mark migration as applied (if manually executed)
+prisma migrate resolve --applied "migration_name"
+
+# Mark migration as rolled back
+prisma migrate resolve --rolled-back "migration_name"
+```
+
+### PostGIS Issues
+
+```sql
+-- Verify PostGIS installation
+SELECT PostGIS_Version();
+
+-- Check geometry validity
+SELECT id, ST_IsValid(geom), ST_IsValidReason(geom)
+FROM forest_geometry_n4
+WHERE NOT ST_IsValid(geom);
+```

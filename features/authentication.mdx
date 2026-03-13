@@ -1,0 +1,377 @@
+---
+title: 'Authentication & Authorization'
+description: 'NextAuth v5 with credential authentication, session management, and RBAC'
+---
+
+## Overview
+
+SMyEG uses NextAuth v5 (Auth.js) for authentication with a comprehensive role-based access control (RBAC) system. The authentication flow supports multi-organization access with credential-based login.
+
+## Authentication Flow
+
+### NextAuth v5 Configuration
+
+The authentication is configured in `src/lib/auth.ts` using NextAuth v5 with JWT session strategy:
+
+```typescript
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  trustHost: true,
+  session: { strategy: "jwt" },
+  pages: {
+    signIn: "/login",
+  },
+  providers: [
+    Credentials({
+      // Credential provider configuration
+    })
+  ]
+});
+```
+
+### Credential Provider
+
+The system uses a credential provider that accepts:
+- **identifier**: Email or username
+- **password**: User password
+- **organizationId**: Selected organization context
+
+```typescript
+Credentials({
+  credentials: {
+    identifier: { label: "Usuario", type: "text" },
+    password: { label: "Password", type: "password" },
+    organizationId: { label: "Organization", type: "text" },
+  },
+  async authorize(credentials) {
+    // Authentication logic
+  }
+})
+```
+
+## User Authentication Process
+
+<Steps>
+  <Step title="User Lookup">
+    The system searches for users by email or username (case-insensitive):
+    
+    ```typescript
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: { equals: identifier, mode: "insensitive" } },
+          { username: { equals: identifier, mode: "insensitive" } }
+        ]
+      },
+      include: { organization: true }
+    });
+    ```
+  </Step>
+  
+  <Step title="Account Status Validation">
+    Validates user status and account locks:
+    
+    - User must have `ACTIVE` status
+    - Account must not be locked (`lockedUntil` check)
+    - Password hash must exist
+  </Step>
+  
+  <Step title="Password Verification">
+    Uses secure password hashing with automatic lock after failed attempts:
+    
+    ```typescript
+    const valid = await verifyPassword(password, user.passwordHash);
+    if (!valid) {
+      const attempts = user.failedLoginAttempts + 1;
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginAttempts: attempts,
+          // Lock account for 30 minutes after 5 failed attempts
+          lockedUntil: attempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null
+        }
+      });
+    }
+    ```
+  </Step>
+  
+  <Step title="Organization Authorization">
+    Verifies user has access to the selected organization:
+    
+    ```typescript
+    const authorizedOrganizations = await getAuthorizedOrganizationsForUser(
+      user.id, 
+      user.organizationId
+    );
+    const selectedOrganization = authorizedOrganizations.find(
+      org => org.id === organizationId
+    );
+    ```
+  </Step>
+  
+  <Step title="Load Roles & Permissions">
+    Fetches user roles and permissions:
+    
+    ```typescript
+    const roleInfo = await getUserRolesAndPermissions(user.id);
+    ```
+  </Step>
+</Steps>
+
+## Session Management
+
+### JWT Strategy
+
+Sessions are managed using JWT tokens with custom claims:
+
+```typescript
+callbacks: {
+  async jwt({ token, user }) {
+    if (user) {
+      token.id = user.id;
+      token.roles = user.roles;
+      token.permissions = user.permissions;
+      token.organizationId = user.organizationId ?? null;
+      token.organizationName = user.organizationName ?? null;
+    }
+    return token;
+  },
+  async session({ session, token }) {
+    if (session.user) {
+      session.user.id = token.id;
+      session.user.roles = token.roles ?? [];
+      session.user.permissions = token.permissions ?? [];
+      session.user.organizationId = token.organizationId ?? null;
+      session.user.organizationName = token.organizationName ?? null;
+    }
+    return session;
+  }
+}
+```
+
+### Session Data Structure
+
+The session includes:
+- User ID and profile information
+- Array of role slugs
+- Array of permissions (format: `module:action`)
+- Current organization context
+
+## Role-Based Access Control (RBAC)
+
+### Database Schema
+
+The RBAC system uses a hierarchical permission model:
+
+```prisma
+model Role {
+  id              String           @id @default(uuid())
+  organizationId  String?
+  name            String
+  slug            String
+  isSystemRole    Boolean          @default(false)
+  isActive        Boolean          @default(true)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+}
+
+model Permission {
+  id              String           @id @default(uuid())
+  moduleId        String
+  action          PermissionAction
+  name            String
+  rolePermissions RolePermission[]
+}
+
+enum PermissionAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  EXPORT
+  ADMIN
+}
+```
+
+### Permission Loading
+
+Permissions are loaded during authentication from `src/lib/permissions.ts`:
+
+```typescript
+export async function getUserRolesAndPermissions(userId: string) {
+  const roleAssignments = await prisma.userRole.findMany({
+    where: { userId, isActive: true },
+    include: {
+      role: {
+        include: {
+          rolePermissions: {
+            include: {
+              permission: {
+                include: { module: true }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  const roles = roleAssignments.map(assignment => assignment.role.slug);
+  const permissions = roleAssignments.flatMap(assignment =>
+    assignment.role.rolePermissions.map(
+      rolePermission => `${rolePermission.permission.module.slug}:${rolePermission.permission.action}`
+    )
+  );
+
+  return {
+    roles,
+    permissions: Array.from(new Set(permissions))
+  };
+}
+```
+
+### Permission Checking
+
+The system provides a helper function to check permissions:
+
+```typescript
+export function hasPermission(
+  permissions: string[], 
+  moduleSlug: string, 
+  action: string
+) {
+  return permissions.includes(`${moduleSlug}:${action}`) || 
+         permissions.includes(`${moduleSlug}:ADMIN`);
+}
+```
+
+<Info>
+  The `ADMIN` action grants all permissions for a module, providing a convenient way to assign full module access.
+</Info>
+
+## Security Features
+
+### Account Lockout
+
+Automatic account lockout after failed login attempts:
+
+<CardGroup cols={2}>
+  <Card title="Failed Attempts" icon="lock">
+    5 failed attempts trigger a 30-minute account lock
+  </Card>
+  <Card title="Automatic Reset" icon="clock">
+    Failed attempt counter resets on successful login
+  </Card>
+</CardGroup>
+
+### Audit Logging
+
+All authentication events are logged:
+
+```typescript
+await prisma.auditLog.create({
+  data: {
+    userId: user.id,
+    action: "LOGIN", // or "LOGIN_FAILED"
+    entityType: "User",
+    entityId: user.id
+  }
+});
+```
+
+### User Status Management
+
+User accounts support multiple statuses:
+
+```prisma
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_VERIFICATION
+  LOCKED
+  DELETED
+}
+```
+
+## Multi-Factor Authentication (MFA)
+
+The user schema includes MFA support fields:
+
+```prisma
+model User {
+  mfaEnabled      Boolean   @default(false)
+  mfaSecret       String?
+  mfaBackupCodes  String[]
+}
+```
+
+<Warning>
+  MFA implementation is prepared in the schema but not yet active in the authentication flow.
+</Warning>
+
+## API Integration
+
+### Server-Side Session Access
+
+Access the current session in server components or API routes:
+
+```typescript
+import { auth } from '@/lib/auth';
+
+export async function GET() {
+  const session = await auth();
+  
+  if (!session?.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+  
+  // Access user data
+  const userId = session.user.id;
+  const permissions = session.user.permissions;
+  const orgId = session.user.organizationId;
+}
+```
+
+### Client-Side Session Access
+
+Use the session in client components with the auth store or session provider.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Implement Least Privilege">
+    Grant users only the minimum permissions necessary for their role. Use specific module:action combinations rather than broad ADMIN permissions.
+  </Accordion>
+  
+  <Accordion title="Organization Context">
+    Always verify the organization context in API routes to ensure data isolation between organizations.
+  </Accordion>
+  
+  <Accordion title="Session Validation">
+    Check both authentication status and specific permissions for protected operations:
+    
+    ```typescript
+    if (!session?.user) {
+      return unauthorized();
+    }
+    
+    if (!hasPermission(session.user.permissions, 'patrimony', 'CREATE')) {
+      return forbidden();
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Audit Important Actions">
+    Log authentication events and permission changes to the audit log for security tracking and compliance.
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Organizations" icon="building" href="/features/organizations">
+    Learn about multi-organization architecture
+  </Card>
+  <Card title="User Management" icon="users" href="/guides/user-management">
+    Managing users and roles
+  </Card>
+</CardGroup>

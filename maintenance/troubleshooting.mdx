@@ -1,0 +1,598 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for SMyEG deployment and operations
+---
+
+## Overview
+
+This guide covers common issues you may encounter when running SMyEG and their solutions.
+
+## Database Connection Errors
+
+<Accordion title="Error: Can't reach database server">
+  
+**Symptom:**
+```
+Error: Can't reach database server at `localhost:5432`
+```
+
+**Causes and Solutions:**
+
+1. **PostgreSQL is not running**
+   ```bash
+   # Check if PostgreSQL is running
+   docker ps | grep postgres
+   
+   # Start PostgreSQL with Docker Compose
+   docker compose up -d
+   ```
+
+2. **Incorrect DATABASE_URL**
+   
+   Verify your `.env` file:
+   ```bash
+   DATABASE_URL="postgresql://user:password@localhost:5432/smyeg_db?schema=public"
+   ```
+   
+   Check:
+   - Username and password are correct
+   - Port `5432` is not already in use
+   - Database name matches your setup
+
+3. **Firewall blocking connection**
+   ```bash
+   # Test connection
+   psql -h localhost -U postgres -d smyeg_db
+   ```
+
+</Accordion>
+
+<Accordion title="Error: password authentication failed">
+
+**Symptom:**
+```
+error: password authentication failed for user "postgres"
+```
+
+**Solution:**
+
+1. Check credentials in `.env`:
+   ```bash
+   DATABASE_URL="postgresql://postgres:your_password@localhost:5432/smyeg_db"
+   ```
+
+2. Reset PostgreSQL password:
+   ```bash
+   # Access container
+   docker exec -it smyeg-postgres psql -U postgres
+   
+   # Change password
+   ALTER USER postgres PASSWORD 'new_password';
+   ```
+
+3. Update `.env` with new password
+
+</Accordion>
+
+<Accordion title="Error: database does not exist">
+
+**Symptom:**
+```
+FATAL: database "smyeg_db" does not exist
+```
+
+**Solution:**
+
+Create the database:
+```bash
+# Using psql
+psql -U postgres -c "CREATE DATABASE smyeg_db;"
+
+# Or via Docker
+docker exec -it smyeg-postgres psql -U postgres -c "CREATE DATABASE smyeg_db;"
+```
+
+Then run migrations:
+```bash
+npm run db:migrate
+```
+
+</Accordion>
+
+## Shapefile Import Failures
+
+<Accordion title="Error: Archivo ZIP inválido">
+
+**Symptom:**
+```
+Archivo ZIP inválido. Faltan: .shp, .shx, .dbf, .prj
+```
+
+**Solution:**
+
+Ensure your ZIP file contains all required shapefile components:
+- `.shp` - geometry data
+- `.shx` - shape index
+- `.dbf` - attribute data
+- `.prj` - coordinate system
+
+**Verify ZIP contents:**
+```bash
+unzip -l yourfile.zip
+```
+
+**Expected output:**
+```
+Archive:  yourfile.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+     1234  2026-03-13 10:30   data.shp
+      234  2026-03-13 10:30   data.shx
+     5678  2026-03-13 10:30   data.dbf
+      145  2026-03-13 10:30   data.prj
+```
+
+</Accordion>
+
+<Accordion title="Error: No se encontraron códigos de jerarquía">
+
+**Symptom:**
+```
+No se encontraron códigos de jerarquía Nivel2/Nivel3/Nivel4 en las propiedades
+```
+
+**Solution:**
+
+The shapefile attributes must include hierarchy codes. Supported field names:
+
+| Level | Accepted Field Names |
+|-------|---------------------|
+| Level 2 | `nivel2`, `nivel_2`, `cod_n2`, `codfinca`, `finca`, `nivel2_id`, `n2` |
+| Level 3 | `nivel3`, `nivel_3`, `cod_n3`, `codlote`, `lote`, `nivel3_id`, `n3` |
+| Level 4 | `nivel4`, `nivel_4`, `cod_n4`, `codrodal`, `rodal`, `nivel4_id`, `n4` |
+
+**Check your shapefile attributes:**
+```bash
+ogrinfo -al yourfile.shp | grep -E "nivel2|nivel3|nivel4"
+```
+
+Ensure attributes are populated for all features.
+
+</Accordion>
+
+<Accordion title="Error: Solo se permiten geometrías Polygon o MultiPolygon">
+
+**Symptom:**
+```
+Solo se permiten geometrías Polygon o MultiPolygon
+```
+
+**Solution:**
+
+The shapefile contains invalid geometry types (e.g., Point, LineString).
+
+**Check geometry type:**
+```bash
+ogrinfo yourfile.shp -al | grep "Geometry:"
+```
+
+**Convert to Polygon if needed:**
+```bash
+ogr2ogr -f "ESRI Shapefile" output.shp input.shp -nlt POLYGON
+```
+
+</Accordion>
+
+<Accordion title="Error: El uso actual no existe en la tabla auxiliar">
+
+**Symptom:**
+```
+El uso actual no existe en la tabla auxiliar de Uso de Suelos
+```
+
+**Solution:**
+
+The land use name in the shapefile doesn't match any entry in the `LandUseType` table.
+
+1. **Check existing land use types:**
+   ```sql
+   SELECT code, name FROM "LandUseType" 
+   WHERE "organizationId" = 'your-org-id' 
+   AND "isActive" = TRUE;
+   ```
+
+2. **Add missing land use type** via the UI or database:
+   ```sql
+   INSERT INTO "LandUseType" (id, code, name, category, "organizationId", "isActive")
+   VALUES (
+     gen_random_uuid(),
+     'BOSQUE_NAT',
+     'Bosque Natural',
+     'Forestal',
+     'your-org-id',
+     TRUE
+   );
+   ```
+
+3. **Re-upload shapefile** after adding land use types
+
+</Accordion>
+
+## Worker Issues
+
+<Accordion title="Geo Worker Not Processing Jobs">
+
+**Symptom:**
+Jobs remain in `PENDING` status indefinitely.
+
+**Diagnostic Steps:**
+
+1. **Check worker is running:**
+   ```bash
+   pm2 status | grep geo-worker
+   # or
+   ps aux | grep geo-worker-scheduler
+   ```
+
+2. **View worker logs:**
+   ```bash
+   pm2 logs confor-geo-worker --lines 100
+   ```
+
+3. **Check for errors in database:**
+   ```sql
+   SELECT id, status, error_message, started_at, completed_at
+   FROM geo_import_jobs
+   WHERE status IN ('PROCESSING', 'FAILED')
+   ORDER BY created_at DESC
+   LIMIT 10;
+   ```
+
+**Solutions:**
+
+- **Restart worker:**
+  ```bash
+  pm2 restart confor-geo-worker
+  ```
+
+- **Check file permissions:**
+  ```bash
+  ls -la uploads/
+  # Ensure worker can read uploaded files
+  ```
+
+- **Increase batch sizes** if processing slowly:
+  ```bash
+  export GEO_IMPORT_BATCH_SIZE=10
+  pm2 restart confor-geo-worker
+  ```
+
+</Accordion>
+
+<Accordion title="Worker Crashes on Startup">
+
+**Symptom:**
+```
+[PM2] Error: Worker crashed immediately after start
+```
+
+**Solution:**
+
+1. **Check environment variables:**
+   ```bash
+   cat .env | grep DATABASE_URL
+   ```
+
+2. **Verify database connection:**
+   ```bash
+   psql $DATABASE_URL -c "SELECT 1;"
+   ```
+
+3. **Check Node.js version:**
+   ```bash
+   node --version  # Should be 20+
+   ```
+
+4. **Review detailed logs:**
+   ```bash
+   tsx src/workers/geo-worker-scheduler.ts
+   # Run directly to see full error output
+   ```
+
+</Accordion>
+
+<Accordion title="Memory Leaks in Workers">
+
+**Symptom:**
+Worker memory usage continuously increases.
+
+**Solution:**
+
+1. **Monitor memory:**
+   ```bash
+   pm2 monit
+   ```
+
+2. **Set memory limits in PM2:**
+   ```javascript
+   // ecosystem.config.cjs
+   max_memory_restart: '500M'
+   ```
+
+3. **Reduce batch sizes:**
+   ```bash
+   export GEO_IMPORT_BATCH_SIZE=3
+   export GEO_RECALC_BATCH_SIZE=5
+   ```
+
+4. **Restart worker regularly:**
+   ```bash
+   pm2 restart confor-geo-worker --cron "0 */4 * * *"  # Every 4 hours
+   ```
+
+</Accordion>
+
+## Authentication Problems
+
+<Accordion title="Error: Invalid credentials">
+
+**Symptom:**
+Login fails with "Invalid credentials" error.
+
+**Solution:**
+
+1. **Use default admin account** (development):
+   - Email: `admin@example.com`
+   - Password: `Admin1234`
+
+2. **Reset user password:**
+   ```sql
+   -- Generate new password hash (use bcryptjs)
+   UPDATE "User" 
+   SET "passwordHash" = '$2a$10$...new_hash_here...'
+   WHERE email = 'admin@example.com';
+   ```
+
+3. **Check user status:**
+   ```sql
+   SELECT email, status, "failedLoginAttempts", "lockedUntil"
+   FROM "User"
+   WHERE email = 'admin@example.com';
+   ```
+
+4. **Unlock locked account:**
+   ```sql
+   UPDATE "User"
+   SET status = 'ACTIVE', 
+       "failedLoginAttempts" = 0,
+       "lockedUntil" = NULL
+   WHERE email = 'admin@example.com';
+   ```
+
+</Accordion>
+
+<Accordion title="Error: Session expired">
+
+**Symptom:**
+User is logged out unexpectedly.
+
+**Solution:**
+
+1. **Check session configuration** in `.env`:
+   ```bash
+   NEXTAUTH_SECRET="your-secret-key-here"
+   NEXTAUTH_URL="http://localhost:3000"
+   ```
+
+2. **Verify session in database:**
+   ```sql
+   SELECT id, "userId", "expiresAt", "isActive"
+   FROM "Session"
+   WHERE "userId" = 'user-id-here'
+   ORDER BY "createdAt" DESC;
+   ```
+
+3. **Clear expired sessions:**
+   ```sql
+   DELETE FROM "Session"
+   WHERE "expiresAt" < NOW() OR "isActive" = FALSE;
+   ```
+
+</Accordion>
+
+## Performance Issues
+
+<Accordion title="Slow Query Performance">
+
+**Symptom:**
+Pages load slowly, database queries timeout.
+
+**Diagnostic:**
+
+```sql
+-- Find slow queries
+SELECT query, mean_exec_time, calls
+FROM pg_stat_statements
+ORDER BY mean_exec_time DESC
+LIMIT 10;
+```
+
+**Solutions:**
+
+1. **Add missing indexes:**
+   ```sql
+   CREATE INDEX idx_audit_logs_created_at 
+   ON "AuditLog" ("createdAt" DESC);
+   ```
+
+2. **Analyze and vacuum tables:**
+   ```sql
+   VACUUM ANALYZE "AuditLog";
+   VACUUM ANALYZE forest_geometry_n4;
+   ```
+
+3. **Optimize geometry queries:**
+   ```sql
+   -- Use spatial index
+   CREATE INDEX idx_forest_geom_gist 
+   ON forest_geometry_n4 
+   USING GIST (geom);
+   ```
+
+</Accordion>
+
+<Accordion title="Large Audit Log Table">
+
+**Symptom:**
+Database storage grows rapidly due to audit logs.
+
+**Solution:**
+
+1. **Verify partition setup:**
+   ```sql
+   SELECT inhrelid::regclass AS partition_name
+   FROM pg_inherits
+   WHERE inhparent = 'AuditLog'::regclass;
+   ```
+
+2. **Create missing partitions:**
+   ```bash
+   tsx scripts/create-audit-partition.ts
+   ```
+
+3. **Archive old partitions:**
+   ```sql
+   -- Export old partition
+   COPY (SELECT * FROM audit_logs_2025_12) 
+   TO '/tmp/audit_logs_2025_12.csv' CSV HEADER;
+   
+   -- Drop old partition (after backup)
+   DROP TABLE audit_logs_2025_12;
+   ```
+
+</Accordion>
+
+## Docker and Deployment Issues
+
+<Accordion title="Container Fails to Start">
+
+**Symptom:**
+Docker container exits immediately after starting.
+
+**Solution:**
+
+1. **Check container logs:**
+   ```bash
+   docker logs smyeg-web
+   docker logs smyeg-postgres
+   ```
+
+2. **Verify Docker Compose configuration:**
+   ```bash
+   docker compose config
+   ```
+
+3. **Ensure volumes exist:**
+   ```bash
+   docker volume ls
+   docker volume inspect smyeg_postgres_data
+   ```
+
+4. **Rebuild containers:**
+   ```bash
+   docker compose down
+   docker compose up -d --build
+   ```
+
+</Accordion>
+
+<Accordion title="Port Already in Use">
+
+**Symptom:**
+```
+Error: bind: address already in use
+```
+
+**Solution:**
+
+1. **Find process using port:**
+   ```bash
+   # On Linux/Mac
+   lsof -i :3000
+   lsof -i :5432
+   
+   # On Windows
+   netstat -ano | findstr :3000
+   ```
+
+2. **Kill process or change port:**
+   ```bash
+   # Change port in docker-compose.yml
+   ports:
+     - "3001:3000"  # Use port 3001 instead
+   ```
+
+</Accordion>
+
+## General Debugging Tips
+
+### Enable Debug Logging
+
+```bash
+# .env
+LOG_LEVEL=debug
+NODE_ENV=development
+```
+
+### Database Query Debugging
+
+Enable Prisma query logging:
+
+```typescript
+// lib/prisma.ts
+const prisma = new PrismaClient({
+  log: ['query', 'error', 'warn'],
+});
+```
+
+### Worker Testing
+
+Run worker in single-execution mode for debugging:
+
+```bash
+GEO_WORKER_RUN_ONCE=true tsx src/workers/geo-worker-scheduler.ts
+```
+
+### Health Checks
+
+Verify system components:
+
+```bash
+# Database
+psql $DATABASE_URL -c "SELECT version();"
+
+# PostGIS
+psql $DATABASE_URL -c "SELECT PostGIS_Version();"
+
+# Redis (if used)
+redis-cli ping
+
+# Application
+curl http://localhost:3000/api/health
+```
+
+## Getting Help
+
+If issues persist:
+
+1. Check application logs for detailed error messages
+2. Review recent database migrations for schema issues
+3. Verify environment variables are correctly set
+4. Test with a minimal reproduction case
+5. Consult the [Monitoring](/maintenance/monitoring) guide for diagnostic queries
+
+## Related Resources
+
+- [Database Migrations](/maintenance/migrations)
+- [Monitoring](/maintenance/monitoring)
+- [Background Workers](/guides/workers)

@@ -1,0 +1,232 @@
+---
+title: 'Audit Logs'
+description: 'API endpoints for querying and managing audit logs in the SMyEG system'
+---
+
+## Authentication
+
+All audit log endpoints require authentication with `audit:READ`, `audit:EXPORT`, or `audit:DELETE` permissions.
+
+## Query Audit Logs
+
+<RequestExample>
+```bash
+GET /api/audit
+```
+</RequestExample>
+
+Retrieves a paginated list of audit log entries with filtering capabilities.
+
+### Query Parameters
+
+<ParamField query="page" type="number" default="1">
+  Page number for pagination
+</ParamField>
+
+<ParamField query="limit" type="number" default="50">
+  Number of items per page
+</ParamField>
+
+<ParamField query="action" type="string">
+  Filter by action type. Common values:
+  - `CREATE` - Entity creation
+  - `UPDATE` - Entity modification
+  - `DELETE` - Entity deletion
+  - `EXPORT` - Data export operation
+</ParamField>
+
+<ParamField query="entityType" type="string">
+  Filter by entity type. Examples:
+  - `User`
+  - `Role`
+  - `Organization`
+  - `AuditLog`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of audit log entries
+  
+  <ResponseField name="id" type="string">
+    Audit log entry ID
+  </ResponseField>
+  
+  <ResponseField name="userId" type="string">
+    ID of the user who performed the action
+  </ResponseField>
+  
+  <ResponseField name="action" type="string">
+    Action performed (CREATE, UPDATE, DELETE, EXPORT, etc.)
+  </ResponseField>
+  
+  <ResponseField name="entityType" type="string">
+    Type of entity affected
+  </ResponseField>
+  
+  <ResponseField name="entityId" type="string">
+    ID of the affected entity
+  </ResponseField>
+  
+  <ResponseField name="oldValues" type="object">
+    Previous state of the entity (for UPDATE operations)
+  </ResponseField>
+  
+  <ResponseField name="newValues" type="object">
+    New state of the entity (for CREATE and UPDATE operations)
+  </ResponseField>
+  
+  <ResponseField name="metadata" type="object">
+    Additional metadata about the operation
+  </ResponseField>
+  
+  <ResponseField name="createdAt" type="string">
+    ISO 8601 timestamp of when the action occurred
+  </ResponseField>
+  
+  <ResponseField name="user" type="object">
+    User information
+    
+    <ResponseField name="email" type="string">
+      User's email address
+    </ResponseField>
+    
+    <ResponseField name="firstName" type="string">
+      User's first name
+    </ResponseField>
+    
+    <ResponseField name="lastName" type="string">
+      User's last name
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata
+  
+  <ResponseField name="total" type="number">
+    Total number of audit log entries matching the filter
+  </ResponseField>
+  
+  <ResponseField name="page" type="number">
+    Current page number
+  </ResponseField>
+  
+  <ResponseField name="limit" type="number">
+    Items per page
+  </ResponseField>
+  
+  <ResponseField name="totalPages" type="number">
+    Total number of pages
+  </ResponseField>
+</ResponseField>
+
+### Notes
+
+- Results are ordered by creation date (newest first)
+- Requires `audit:READ` permission
+
+## Export Audit Logs
+
+<RequestExample>
+```bash
+POST /api/audit
+```
+</RequestExample>
+
+Exports audit logs to JSON or CSV format.
+
+### Request Body
+
+<ParamField body="format" type="string" default="csv">
+  Export format: `json` or `csv`
+</ParamField>
+
+### Response
+
+#### JSON Format
+
+<ResponseField name="checksum" type="string">
+  Unique identifier for this export (format: `audit-{timestamp}`)
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of audit log objects (up to 500 most recent entries)
+</ResponseField>
+
+#### CSV Format
+
+<ResponseField name="checksum" type="string">
+  Unique identifier for this export (format: `audit-{timestamp}`)
+</ResponseField>
+
+<ResponseField name="csv" type="string">
+  CSV-formatted string with headers: id, action, entityType, entityId, userId, createdAt
+</ResponseField>
+
+### Notes
+
+- Requires `audit:EXPORT` permission
+- Export is limited to 500 most recent entries
+- An audit log entry is created for the export operation itself
+- CSV includes headers: `id`, `action`, `entityType`, `entityId`, `userId`, `createdAt`
+
+## Delete All Audit Logs
+
+<RequestExample>
+```bash
+DELETE /api/audit
+```
+</RequestExample>
+
+Deletes all audit log entries from the system.
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the deletion was successful
+</ResponseField>
+
+### Notes
+
+- Requires `audit:DELETE` permission
+- This is a permanent deletion operation (not soft delete)
+- Use with extreme caution - this removes all audit history
+- Returns 500 status on failure
+
+<Warning>
+Deleting all audit logs is a destructive operation and cannot be undone. Ensure you have proper backups and authorization before performing this action.
+</Warning>
+
+## Delete Single Audit Log
+
+<RequestExample>
+```bash
+DELETE /api/audit/{id}
+```
+</RequestExample>
+
+Deletes a specific audit log entry.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Audit log entry ID
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the deletion was successful
+</ResponseField>
+
+### Notes
+
+- Requires `audit:DELETE` permission
+- This is a permanent deletion operation (not soft delete)
+- Returns 400 if ID is not provided
+- Returns 404 if the audit log entry is not found or cannot be deleted
+
+<Warning>
+Deleting audit logs can create gaps in your audit trail. This should only be done when absolutely necessary and with proper authorization.
+</Warning>

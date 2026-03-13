@@ -1,0 +1,325 @@
+---
+title: User Management
+description: Complete guide to creating and managing users, user status, password resets, and viewing audit logs
+---
+
+## Overview
+
+The SMyEG user management system provides comprehensive tools for creating users, managing their status, handling password resets, and tracking all user-related actions through audit logs.
+
+## Creating Users
+
+### Via API
+
+Users are created through the `POST /api/users` endpoint:
+
+```typescript
+// Example: Create a new user
+const response = await fetch('/api/users', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    email: 'user@example.com',
+    firstName: 'John',
+    lastName: 'Doe',
+    organizationId: 'org-uuid',
+    roleSlug: 'USER',
+    password: 'SecurePass123' // Optional
+  })
+});
+```
+
+<Info>
+If no password is provided, a random password is generated and the user status is set to `PENDING_VERIFICATION`.
+</Info>
+
+### Implementation Details
+
+The user creation process (from `src/app/api/users/route.ts:134-200`):
+
+1. **Validates** email uniqueness
+2. **Ensures role** exists or creates it via `ensureRoleWithPermissions()`
+3. **Hashes password** using bcrypt
+4. **Creates user record** with initial status
+5. **Assigns role** via `userRoles` relation
+6. **Logs action** in audit trail
+
+```typescript
+const password = parsed.data.password ?? crypto.randomBytes(12).toString('base64url');
+const passwordHash = await hashPassword(password);
+const user = await prisma.user.create({
+  data: {
+    email: parsed.data.email,
+    passwordHash,
+    status: parsed.data.password ? 'ACTIVE' : 'PENDING_VERIFICATION',
+    organizationId: parsed.data.organizationId,
+    userRoles: {
+      create: {
+        roleId: role.id,
+        assignedBy: authResult.session.user.id,
+      },
+    },
+  },
+});
+```
+
+## Managing User Status
+
+### Available Statuses
+
+- `ACTIVE` - User can log in and access the system
+- `PENDING_VERIFICATION` - User created but needs to set password
+- `INACTIVE` - User temporarily disabled
+- `DELETED` - User soft-deleted (logical deletion)
+
+### Updating User Status
+
+Update user status through `PATCH /api/users/[id]`:
+
+```typescript
+await fetch(`/api/users/${userId}`, {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    status: 'INACTIVE'
+  })
+});
+```
+
+### Soft Delete Implementation
+
+From `src/app/api/users/[id]/route.ts:108-144`, the delete operation:
+
+```typescript
+await prisma.user.update({
+  where: { id },
+  data: {
+    status: 'DELETED',
+    deletedAt: new Date(),
+    email: `deleted_${Date.now()}_${id}@invalid.local`,
+  },
+});
+
+// Revoke all active sessions
+await prisma.session.updateMany({
+  where: { userId: id, isActive: true },
+  data: { isActive: false, revokedAt: new Date() },
+});
+```
+
+<Warning>
+Deleting a user is a soft delete operation that preserves data integrity while preventing login. The email is modified to prevent conflicts if recreating users.
+</Warning>
+
+## Password Management
+
+### Password Hashing
+
+Passwords are hashed using bcrypt (from `src/lib/crypto.ts`):
+
+```typescript
+import { hash } from 'bcrypt';
+
+export async function hashPassword(password: string): Promise<string> {
+  return hash(password, 10);
+}
+```
+
+### Password Reset Flow
+
+1. User requests reset via `POST /api/auth/forgot-password`
+2. System generates secure token
+3. Email sent with reset link (if configured)
+4. User submits new password via `POST /api/auth/reset-password`
+
+### Password Update
+
+Users can update their password through the profile endpoint:
+
+```typescript
+await fetch('/api/profile/password', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    currentPassword: 'OldPass123',
+    newPassword: 'NewSecurePass456'
+  })
+});
+```
+
+## Querying Users
+
+### List Users with Filters
+
+The `GET /api/users` endpoint supports extensive filtering:
+
+```typescript
+const params = new URLSearchParams({
+  page: '1',
+  limit: '25',
+  search: 'john',
+  status: 'ACTIVE',
+  role: 'USER',
+  sortBy: 'createdAt',
+  sortOrder: 'desc',
+  organizationId: 'org-uuid' // SUPER_ADMIN only
+});
+
+const response = await fetch(`/api/users?${params}`);
+const { items, pagination } = await response.json();
+```
+
+### Organization Scoping
+
+From `src/app/api/users/route.ts:54-68`, organization filtering ensures data isolation:
+
+```typescript
+const organizationScope = isSuperAdmin
+  ? requestedOrganizationId
+    ? { organizationId: requestedOrganizationId }
+    : {}
+  : { organizationId: currentOrganizationId ?? '' };
+```
+
+<Note>
+Regular users can only see users within their own organization. `SUPER_ADMIN` can filter by any organization or view all users.
+</Note>
+
+## Audit Logs
+
+### Viewing Audit Logs
+
+All user management actions are automatically logged. Access audit logs via `GET /api/audit`:
+
+```typescript
+const response = await fetch('/api/audit?entityType=User&action=CREATE');
+const { items, pagination } = await response.json();
+```
+
+### Audit Log Structure
+
+From `src/app/api/audit/route.ts:5-50`, each log entry includes:
+
+```typescript
+{
+  id: string;
+  userId: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'EXPORT';
+  entityType: string;
+  entityId: string | null;
+  newValues: object | null;
+  metadata: object | null;
+  createdAt: Date;
+  user: {
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+}
+```
+
+### Example: Tracking User Creation
+
+From `src/app/api/users/route.ts:187-197`:
+
+```typescript
+await prisma.auditLog.create({
+  data: {
+    userId: authResult.session.user.id,
+    action: 'CREATE',
+    entityType: 'User',
+    entityId: user.id,
+    newValues: {
+      email: user.email,
+    },
+  },
+});
+```
+
+### Filtering Audit Logs
+
+Available query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `page` | number | Page number (default: 1) |
+| `limit` | number | Records per page (default: 50) |
+| `action` | string | Filter by action type |
+| `entityType` | string | Filter by entity type |
+
+## Permission Requirements
+
+### Required Permissions
+
+| Operation | Permission |
+|-----------|------------|
+| List users | `users:READ` or ADMIN role |
+| Create user | `users:CREATE` or ADMIN role |
+| Update user | `users:UPDATE` or ADMIN role |
+| Delete user | `users:DELETE` or ADMIN role |
+| View audit logs | `audit:READ` |
+
+### Permission Check Example
+
+From `src/app/api/users/route.ts:27-34`:
+
+```typescript
+const roles = authResult.session.user.roles ?? [];
+const isAdmin = roles.includes('ADMIN') || roles.includes('SUPER_ADMIN');
+if (!isAdmin) {
+  const permissionError = requirePermission(
+    authResult.session.user.permissions,
+    'users',
+    'READ'
+  );
+  if (permissionError) return permissionError;
+}
+```
+
+## Import/Export Users
+
+Users can be imported and exported in bulk:
+
+### Export Users
+
+```typescript
+const response = await fetch('/api/users/export');
+const blob = await response.blob();
+```
+
+### Import Users
+
+```typescript
+const formData = new FormData();
+formData.append('file', csvFile);
+
+await fetch('/api/users/import', {
+  method: 'POST',
+  body: formData
+});
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Strong Passwords" icon="lock">
+    Always require strong passwords with minimum length, uppercase, lowercase, and numbers.
+  </Card>
+  <Card title="Role Assignment" icon="user-shield">
+    Assign the least privileged role necessary for user functions.
+  </Card>
+  <Card title="Regular Audits" icon="clipboard-check">
+    Review audit logs regularly to detect suspicious activity.
+  </Card>
+  <Card title="Soft Deletes" icon="trash-restore">
+    Use soft deletes to maintain data integrity and audit trails.
+  </Card>
+</CardGroup>
+
+## Related Files
+
+- User API routes: `src/app/api/users/route.ts`
+- User detail endpoint: `src/app/api/users/[id]/route.ts`
+- Audit logs: `src/app/api/audit/route.ts`
+- Password utilities: `src/lib/crypto.ts`
+- Permission helpers: `src/lib/permissions.ts`

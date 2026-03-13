@@ -1,0 +1,380 @@
+---
+title: Monitoring
+description: Monitor worker jobs, database health, and application performance in SMyEG
+---
+
+## Overview
+
+SMyEG includes multiple asynchronous workers and background jobs that require monitoring to ensure proper operation. This guide covers monitoring worker jobs, database health, and application logs.
+
+## Worker Jobs Monitoring
+
+### Geo Worker Scheduler
+
+The geo worker processes shapefile imports, geometry recalculations, and land variation jobs.
+
+#### Starting the Worker
+
+```bash
+pnpm worker:geo
+```
+
+#### Worker Configuration
+
+Environment variables control worker behavior:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEO_WORKER_INTERVAL_MS` | `4000` | Polling interval in milliseconds |
+| `GEO_IMPORT_BATCH_SIZE` | `5` | Max import jobs per cycle |
+| `GEO_RECALC_BATCH_SIZE` | `10` | Max recalculation jobs per cycle |
+| `GEO_VARIATION_BATCH_SIZE` | `15` | Max variation jobs per cycle |
+| `GEO_WORKER_RUN_ONCE` | `false` | Run single cycle then exit (for testing) |
+
+#### Testing Worker Execution
+
+Run a single worker cycle for testing:
+
+```bash
+pnpm worker:geo:once
+```
+
+This sets `GEO_WORKER_RUN_ONCE=true` and exits after processing one batch.
+
+#### Worker Logs
+
+The worker outputs structured logs:
+
+```
+[2026-03-13T02:30:45.123Z] [geo-worker] started (interval=4000ms, importBatch=5, recalcBatch=10, variationBatch=15, runOnce=false)
+[2026-03-13T02:30:50.456Z] [geo-worker] processed import_jobs=3 recalc_jobs=5 variation_jobs=0
+```
+
+### Asset Measurement Worker
+
+Processes biological asset measurement calculations.
+
+#### Starting the Worker
+
+```bash
+pnpm worker:assets
+```
+
+#### Worker Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASSET_MEASUREMENT_WORKER_RUN_ONCE` | `false` | Single execution mode |
+
+```bash
+# Test mode
+pnpm worker:assets:once
+```
+
+## Job Status Monitoring
+
+### Geo Import Jobs
+
+Query job status from the database:
+
+```sql
+SELECT 
+  status,
+  COUNT(*) as job_count,
+  AVG(processed_records) as avg_processed,
+  AVG(failed_records) as avg_failed
+FROM geo_import_jobs
+WHERE created_at > NOW() - INTERVAL '24 hours'
+GROUP BY status;
+```
+
+**Job Statuses:**
+- `PENDING`: Waiting to be processed
+- `EXTRACTING`: Reading ZIP file
+- `VALIDATING`: Checking shapefile contents
+- `PROCESSING`: Importing geometries
+- `COMPLETED`: Successfully finished
+- `FAILED`: Error occurred
+
+### Geometry Recalculation Jobs
+
+Monitor pending recalculation jobs:
+
+```sql
+SELECT 
+  status,
+  COUNT(*) as count,
+  AVG(attempts) as avg_attempts
+FROM forest_geometry_recalc_jobs
+WHERE status IN ('PENDING', 'PROCESSING')
+GROUP BY status;
+```
+
+### Asset Calculation Jobs
+
+Check asset measurement processing:
+
+```sql
+SELECT 
+  domain,
+  protocol_type,
+  status,
+  COUNT(*) as job_count
+FROM asset_calculation_jobs
+WHERE created_at > NOW() - INTERVAL '7 days'
+GROUP BY domain, protocol_type, status;
+```
+
+## Database Health Monitoring
+
+### Connection Pool Status
+
+Monitor active connections:
+
+```sql
+SELECT 
+  count(*) as active_connections,
+  max_conn,
+  max_conn - count(*) as available_connections
+FROM pg_stat_activity
+CROSS JOIN (SELECT setting::int as max_conn FROM pg_settings WHERE name = 'max_connections') s;
+```
+
+### Table Sizes
+
+Identify large tables:
+
+```sql
+SELECT 
+  schemaname,
+  tablename,
+  pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC
+LIMIT 10;
+```
+
+### Partition Health (Audit Logs)
+
+Verify partition coverage:
+
+```sql
+SELECT 
+  inhrelid::regclass AS partition_name,
+  pg_get_expr(relpartbound, inhrelid) AS partition_range
+FROM pg_inherits
+WHERE inhparent = 'AuditLog'::regclass
+ORDER BY partition_name;
+```
+
+<Note>
+Ensure partitions are created before the month starts to avoid insert failures.
+</Note>
+
+### Index Usage
+
+Identify unused indexes:
+
+```sql
+SELECT 
+  schemaname,
+  tablename,
+  indexname,
+  idx_scan,
+  pg_size_pretty(pg_relation_size(indexrelid)) as index_size
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0 
+  AND schemaname = 'public'
+ORDER BY pg_relation_size(indexrelid) DESC;
+```
+
+## Application Logs
+
+### Log Locations
+
+**Development Mode:**
+```bash
+# Next.js application logs
+npm run dev
+```
+
+Logs output to console with timestamps and request details.
+
+**Production Mode with PM2:**
+```bash
+# View all logs
+pm2 logs
+
+# View specific process
+pm2 logs confor-web
+pm2 logs confor-geo-worker
+```
+
+### Log Levels
+
+Configure log verbosity via environment variables:
+
+```bash
+LOG_LEVEL=debug  # debug, info, warn, error
+```
+
+### Structured Logging
+
+Worker logs include structured data:
+
+```json
+{
+  "timestamp": "2026-03-13T02:30:50.456Z",
+  "worker": "geo-worker",
+  "event": "batch_processed",
+  "import_jobs": 3,
+  "recalc_jobs": 5,
+  "variation_jobs": 0
+}
+```
+
+## Performance Metrics
+
+### Query Performance
+
+Identify slow queries:
+
+```sql
+SELECT 
+  query,
+  calls,
+  total_exec_time,
+  mean_exec_time,
+  max_exec_time
+FROM pg_stat_statements
+ORDER BY mean_exec_time DESC
+LIMIT 10;
+```
+
+<Note>
+Requires `pg_stat_statements` extension. Enable it with:
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+```
+</Note>
+
+### Geometry Operations
+
+Monitor PostGIS operations:
+
+```sql
+SELECT 
+  level4_id,
+  superficie_ha,
+  valid_from,
+  is_active
+FROM forest_geometry_n4
+WHERE organization_id = 'your-org-id'
+  AND is_active = TRUE
+ORDER BY valid_from DESC
+LIMIT 20;
+```
+
+### Worker Throughput
+
+Calculate jobs processed per hour:
+
+```sql
+SELECT 
+  date_trunc('hour', completed_at) as hour,
+  status,
+  COUNT(*) as jobs_completed
+FROM geo_import_jobs
+WHERE completed_at > NOW() - INTERVAL '24 hours'
+GROUP BY hour, status
+ORDER BY hour DESC;
+```
+
+## PM2 Process Management
+
+### Monitoring Processes
+
+View process status:
+
+```bash
+pm2 status
+```
+
+**Expected output:**
+```
+┌─────┬──────────────────────┬─────────┬─────────┬──────────┐
+│ id  │ name                 │ status  │ restart │ memory   │
+├─────┼──────────────────────┼─────────┼─────────┼──────────┤
+│ 0   │ confor-web           │ online  │ 0       │ 150 MB   │
+│ 1   │ confor-geo-worker    │ online  │ 0       │ 80 MB    │
+└─────┴──────────────────────┴─────────┴─────────┴──────────┘
+```
+
+### Process Monitoring
+
+```bash
+# Real-time monitoring
+pm2 monit
+
+# CPU/Memory usage
+pm2 describe confor-geo-worker
+```
+
+### Restart Policies
+
+Configure automatic restarts in `ecosystem.config.cjs`:
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: 'confor-geo-worker',
+      script: 'tsx',
+      args: 'src/workers/geo-worker-scheduler.ts',
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '10s'
+    }
+  ]
+};
+```
+
+## Alerting and Notifications
+
+### Failed Job Alerts
+
+Create a cron job to check for failed jobs:
+
+```bash
+#!/bin/bash
+FAILED_COUNT=$(psql -U postgres -d smyeg_db -t -c "SELECT COUNT(*) FROM geo_import_jobs WHERE status = 'FAILED' AND created_at > NOW() - INTERVAL '1 hour';")
+
+if [ "$FAILED_COUNT" -gt 0 ]; then
+  echo "Alert: $FAILED_COUNT failed geo import jobs in the last hour" | mail -s "SMyEG Worker Alert" admin@example.com
+fi
+```
+
+### Database Size Alerts
+
+Monitor database growth:
+
+```sql
+SELECT 
+  pg_size_pretty(pg_database_size('smyeg_db')) as db_size;
+```
+
+## Best Practices
+
+1. **Monitor worker logs daily** for errors or performance degradation
+2. **Set up automated alerts** for failed jobs exceeding threshold
+3. **Review database query performance** weekly
+4. **Archive old audit logs** using partition management
+5. **Monitor disk space** for uploads and database growth
+6. **Test worker recovery** by simulating failures
+
+## Related Resources
+
+- [Database Migrations](/maintenance/migrations)
+- [Troubleshooting](/maintenance/troubleshooting)
+- [Background Workers](/guides/workers)

@@ -1,0 +1,711 @@
+---
+title: Production Deployment
+description: Complete checklist for deploying SMyEG to production environments
+---
+
+## Overview
+
+This guide covers essential steps for deploying SMyEG in a production environment, including security hardening, performance optimization, and operational best practices.
+
+## Pre-Deployment Checklist
+
+### Environment Variables
+
+<Steps>
+  <Step title="Database configuration">
+    Set your PostgreSQL connection string:
+    ```bash
+    DATABASE_URL="postgresql://username:password@host:5432/database_name"
+    ```
+    <Warning>
+      Use strong passwords with mixed case, numbers, and special characters.
+    </Warning>
+  </Step>
+
+  <Step title="Redis configuration">
+    Configure Redis connection:
+    ```bash
+    REDIS_URL="redis://:password@host:6379"
+    ```
+  </Step>
+
+  <Step title="NextAuth configuration">
+    Generate secure secrets:
+    ```bash
+    # Generate with openssl
+    openssl rand -base64 32
+    ```
+    Set in environment:
+    ```bash
+    AUTH_SECRET="your-generated-secret-here"
+    AUTH_URL="https://yourdomain.com"
+    ```
+    <Warning>
+      Never use the same `AUTH_SECRET` across environments.
+    </Warning>
+  </Step>
+
+  <Step title="Node environment">
+    ```bash
+    NODE_ENV="production"
+    ```
+  </Step>
+
+  <Step title="Email configuration (if applicable)">
+    ```bash
+    SMTP_HOST="smtp.example.com"
+    SMTP_PORT="587"
+    SMTP_USER="notifications@yourdomain.com"
+    SMTP_PASSWORD="secure-password"
+    SMTP_FROM="SMyEG <noreply@yourdomain.com>"
+    ```
+  </Step>
+
+  <Step title="Geo worker configuration">
+    ```bash
+    GEO_WORKER_INTERVAL_MS="5000"
+    GEO_IMPORT_BATCH_SIZE="500"
+    GEO_RECALC_BATCH_SIZE="200"
+    ```
+  </Step>
+</Steps>
+
+### Security Hardening
+
+<Warning>
+  Failure to implement these security measures can expose your application to attacks.
+</Warning>
+
+#### 1. Change Default Credentials
+
+The application seeds a default admin user:
+- Email: `admin@example.com`
+- Password: `Admin1234`
+
+**Immediately after deployment:**
+1. Log in with default credentials
+2. Change the admin email and password
+3. Or delete this user and create a new admin account
+
+#### 2. Database Security
+
+- **Use strong passwords** for PostgreSQL user
+- **Restrict network access** to database (firewall rules)
+- **Enable SSL/TLS** for database connections:
+  ```bash
+  DATABASE_URL="postgresql://user:pass@host:5432/db?sslmode=require"
+  ```
+- **Limit user permissions** - application user should not have superuser privileges
+
+#### 3. Redis Security
+
+- **Require password authentication**
+- **Bind to localhost** or private network only
+- **Disable dangerous commands**:
+  ```bash
+  redis-cli CONFIG SET rename-command FLUSHALL ""
+  redis-cli CONFIG SET rename-command FLUSHDB ""
+  ```
+
+#### 4. Application Security
+
+- **Enable HTTPS only** - redirect all HTTP traffic
+- **Set secure headers** in Next.js config:
+  ```javascript
+  // next.config.js
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY'
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff'
+          },
+          {
+            key: 'Referrer-Policy',
+            value: 'strict-origin-when-cross-origin'
+          },
+        ],
+      },
+    ];
+  }
+  ```
+- **Configure CORS** appropriately
+- **Rate limit** authentication endpoints
+- **Enable audit logging** (already implemented in SMyEG)
+
+#### 5. File Upload Security
+
+For shapefile uploads (Nivel 4):
+- **Validate file extensions** (.shp, .shx, .dbf, .prj)
+- **Scan for malware** before processing
+- **Limit file sizes** (configure in Next.js):
+  ```javascript
+  // next.config.js
+  experimental: {
+    bodySizeLimit: '10mb'
+  }
+  ```
+- **Store uploads outside web root**
+- **Use temporary processing directories** that are cleaned regularly
+
+### Database Setup
+
+<Steps>
+  <Step title="Apply migrations">
+    ```bash
+    npm run db:generate
+    npm run db:migrate
+    ```
+    This creates tables, extensions (PostGIS), and partitioning for `audit_logs`.
+  </Step>
+
+  <Step title="Seed initial data">
+    ```bash
+    npm run db:seed
+    ```
+    Creates initial admin user, roles, and permissions.
+  </Step>
+
+  <Step title="Sync modules">
+    ```bash
+    npm run db:sync-modules
+    ```
+    Ensures module metadata is up to date.
+  </Step>
+
+  <Step title="Set up partition management">
+    The `audit_logs` table uses monthly partitions. Create the next partition before month-end:
+    ```bash
+    tsx scripts/create-audit-partition.ts
+    ```
+    <Warning>
+      Automate this task with a cron job to run on the 1st of each month.
+    </Warning>
+  </Step>
+</Steps>
+
+### Database Backups
+
+Implement a robust backup strategy:
+
+#### Automated PostgreSQL Backups
+
+**Daily backups with cron:**
+
+```bash
+# /etc/cron.daily/postgres-backup.sh
+#!/bin/bash
+BACKUP_DIR="/var/backups/postgres"
+DATE=$(date +%Y%m%d_%H%M%S)
+DB_NAME="app_prod"
+
+pg_dump -U postgres -h localhost $DB_NAME | gzip > $BACKUP_DIR/backup_$DATE.sql.gz
+
+# Keep only last 30 days
+find $BACKUP_DIR -name "backup_*.sql.gz" -mtime +30 -delete
+```
+
+**With Docker Compose:**
+
+```bash
+# Backup
+docker compose exec postgres pg_dump -U postgres app_prod | gzip > backup_$(date +%Y%m%d).sql.gz
+
+# Restore
+gunzip -c backup_20260313.sql.gz | docker compose exec -T postgres psql -U postgres app_prod
+```
+
+#### Backup Retention Policy
+
+- **Daily backups**: Keep 30 days
+- **Weekly backups**: Keep 12 weeks
+- **Monthly backups**: Keep 12 months
+- **Store off-site**: Use S3, Azure Blob, or similar
+
+#### Test Restores
+
+<Warning>
+  Untested backups are not backups. Perform restore tests monthly.
+</Warning>
+
+```bash
+# Test restore to temporary database
+createdb test_restore
+gunzip -c backup.sql.gz | psql test_restore
+psql test_restore -c "SELECT COUNT(*) FROM users;"
+dropdb test_restore
+```
+
+## Deployment Methods
+
+Choose the deployment method that fits your infrastructure:
+
+### Option 1: PM2 (Recommended for VPS)
+
+See [PM2 Deployment](/deployment/pm2) for detailed instructions.
+
+**Summary:**
+```bash
+# Build application
+pnpm build
+
+# Start with PM2
+pm2 start ecosystem.config.cjs
+
+# Enable auto-restart
+pm2 save
+pm2 startup
+```
+
+### Option 2: Docker (Recommended for cloud)
+
+See [Docker Deployment](/deployment/docker) for container setup.
+
+**For full stack deployment**, extend `docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app_prod
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  geo-worker:
+    build: .
+    command: pnpm worker:geo
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app_prod
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      GEO_WORKER_INTERVAL_MS: "5000"
+      GEO_IMPORT_BATCH_SIZE: "500"
+      GEO_RECALC_BATCH_SIZE: "200"
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  postgres:
+    # ... existing config
+
+  redis:
+    # ... existing config
+```
+
+### Option 3: Serverless (Vercel, AWS Lambda)
+
+<Warning>
+  Geo worker requires a long-running process and cannot run on serverless platforms. Deploy workers separately.
+</Warning>
+
+**Vercel deployment:**
+```bash
+npm install -g vercel
+vercel
+```
+
+Configure environment variables in Vercel dashboard.
+
+**Worker deployment**: Use PM2 on a separate VPS or container service.
+
+## Monitoring and Observability
+
+### Application Monitoring
+
+#### Built-in Audit Logs
+
+SMyEG includes comprehensive audit logging:
+- User authentication events
+- Data modifications (create, update, delete)
+- Permission changes
+- Failed access attempts
+
+Query recent audit logs:
+```sql
+SELECT * FROM audit_logs 
+WHERE created_at > NOW() - INTERVAL '1 day'
+ORDER BY created_at DESC
+LIMIT 100;
+```
+
+#### PM2 Monitoring
+
+For PM2 deployments:
+```bash
+# Real-time monitoring
+pm2 monit
+
+# Process metrics
+pm2 show confor-web
+
+# Log streaming
+pm2 logs confor-web --lines 100
+```
+
+#### External Monitoring Tools
+
+Recommended services:
+- **Uptime monitoring**: UptimeRobot, Pingdom
+- **Error tracking**: Sentry
+- **Performance monitoring**: New Relic, Datadog
+- **Log aggregation**: LogDNA, Papertrail
+
+### Database Monitoring
+
+#### Query Performance
+
+Identify slow queries:
+```sql
+-- Enable query logging
+ALTER DATABASE app_prod SET log_min_duration_statement = 1000; -- 1 second
+
+-- View active queries
+SELECT pid, age(clock_timestamp(), query_start), usename, query 
+FROM pg_stat_activity 
+WHERE state != 'idle' AND query NOT ILIKE '%pg_stat_activity%'
+ORDER BY query_start DESC;
+```
+
+#### Connection Pool Monitoring
+
+```sql
+SELECT * FROM pg_stat_database WHERE datname = 'app_prod';
+```
+
+Configure Prisma connection pool:
+```bash
+DATABASE_URL="postgresql://user:pass@host:5432/db?connection_limit=20&pool_timeout=10"
+```
+
+#### Partition Maintenance
+
+Monitor partition size:
+```sql
+SELECT 
+  tablename,
+  pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+FROM pg_tables
+WHERE tablename LIKE 'audit_logs_%'
+ORDER BY tablename;
+```
+
+### Worker Monitoring
+
+Monitor geo worker health:
+
+```sql
+-- Check pending import jobs
+SELECT COUNT(*) FROM nivel4_import_jobs WHERE status = 'pending';
+
+-- Check failed jobs
+SELECT * FROM nivel4_import_jobs WHERE status = 'failed' ORDER BY created_at DESC LIMIT 10;
+
+-- Check processing times
+SELECT 
+  AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) AS avg_seconds,
+  status
+FROM nivel4_import_jobs
+WHERE status IN ('completed', 'failed')
+GROUP BY status;
+```
+
+## Performance Optimization
+
+### Next.js Configuration
+
+```javascript
+// next.config.js
+module.exports = {
+  compress: true, // Enable gzip compression
+  poweredByHeader: false, // Remove X-Powered-By header
+  reactStrictMode: true,
+  images: {
+    domains: ['yourdomain.com'],
+    formats: ['image/avif', 'image/webp'],
+  },
+};
+```
+
+### Database Optimization
+
+#### Indexes
+
+Ensure critical indexes exist:
+```sql
+-- User lookups
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id);
+
+-- Audit logs (partitioned table)
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+
+-- Geospatial queries
+CREATE INDEX IF NOT EXISTS idx_nivel4_geom ON nivel4 USING GIST(geom);
+```
+
+#### VACUUM and ANALYZE
+
+Automate database maintenance:
+```sql
+-- Configure autovacuum (in postgresql.conf)
+autovacuum = on
+autovacuum_naptime = 1min
+autovacuum_vacuum_scale_factor = 0.1
+autovacuum_analyze_scale_factor = 0.05
+```
+
+Manual vacuum:
+```sql
+VACUUM ANALYZE;
+```
+
+### Redis Optimization
+
+```bash
+# Set eviction policy
+redis-cli CONFIG SET maxmemory-policy allkeys-lru
+
+# Set max memory (adjust based on available RAM)
+redis-cli CONFIG SET maxmemory 512mb
+
+# Enable persistence
+redis-cli CONFIG SET save "900 1 300 10 60 10000"
+```
+
+## Scaling Strategies
+
+### Horizontal Scaling (Web App)
+
+1. **Enable cluster mode** in PM2:
+   ```javascript
+   {
+     name: "confor-web",
+     instances: "max", // One instance per CPU core
+     exec_mode: "cluster",
+   }
+   ```
+
+2. **Use load balancer** (Nginx, HAProxy):
+   ```nginx
+   upstream smyeg {
+     server 127.0.0.1:3000;
+     server 127.0.0.1:3001;
+     server 127.0.0.1:3002;
+   }
+
+   server {
+     location / {
+       proxy_pass http://smyeg;
+     }
+   }
+   ```
+
+3. **Session storage in Redis** - Ensure NextAuth uses Redis adapter
+
+### Vertical Scaling (Database)
+
+- Increase RAM for larger `shared_buffers`
+- Add CPU cores for parallel query execution
+- Use faster storage (NVMe SSD)
+
+### Worker Scaling
+
+Run multiple geo workers:
+
+```javascript
+{
+  name: "confor-geo-worker",
+  instances: 2, // Run 2 worker instances
+  exec_mode: "fork",
+}
+```
+
+Adjust batch sizes to prevent conflicts:
+```bash
+GEO_IMPORT_BATCH_SIZE="250"  # 500 ÷ 2 workers
+GEO_RECALC_BATCH_SIZE="100"  # 200 ÷ 2 workers
+```
+
+## SSL/TLS Configuration
+
+### Nginx Reverse Proxy
+
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name yourdomain.com;
+
+  ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_ciphers HIGH:!aNULL:!MD5;
+
+  location / {
+    proxy_pass http://localhost:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_cache_bypass $http_upgrade;
+  }
+}
+
+# Redirect HTTP to HTTPS
+server {
+  listen 80;
+  server_name yourdomain.com;
+  return 301 https://$server_name$request_uri;
+}
+```
+
+### Let's Encrypt Certificate
+
+```bash
+# Install certbot
+sudo apt-get install certbot python3-certbot-nginx
+
+# Obtain certificate
+sudo certbot --nginx -d yourdomain.com
+
+# Auto-renewal (runs automatically)
+sudo certbot renew --dry-run
+```
+
+## Disaster Recovery
+
+### Backup Strategy
+
+1. **Database**: Daily automated backups + weekly off-site
+2. **Redis**: RDB snapshots (less critical, can rebuild)
+3. **Application code**: Version control (Git)
+4. **Environment variables**: Secure vault (1Password, AWS Secrets Manager)
+5. **User uploads**: S3 or similar object storage
+
+### Recovery Procedures
+
+#### Database Failure
+
+<Steps>
+  <Step title="Identify the issue">
+    Check PostgreSQL logs and error messages.
+  </Step>
+
+  <Step title="Attempt restart">
+    ```bash
+    sudo systemctl restart postgresql
+    # or
+    docker compose restart postgres
+    ```
+  </Step>
+
+  <Step title="Restore from backup if corrupted">
+    ```bash
+    dropdb app_prod
+    createdb app_prod
+    gunzip -c latest_backup.sql.gz | psql app_prod
+    ```
+  </Step>
+
+  <Step title="Verify data integrity">
+    Run validation queries to ensure data consistency.
+  </Step>
+</Steps>
+
+#### Application Failure
+
+<Steps>
+  <Step title="Check PM2 status">
+    ```bash
+    pm2 status
+    pm2 logs confor-web --err --lines 50
+    ```
+  </Step>
+
+  <Step title="Restart application">
+    ```bash
+    pm2 restart confor-web
+    ```
+  </Step>
+
+  <Step title="Roll back deployment if needed">
+    ```bash
+    git checkout previous-stable-tag
+    pnpm install
+    pnpm build
+    pm2 restart all
+    ```
+  </Step>
+</Steps>
+
+## Post-Deployment Validation
+
+After deploying to production:
+
+- [ ] Application is accessible via HTTPS
+- [ ] Default admin credentials changed
+- [ ] Database migrations applied successfully
+- [ ] Geo worker is processing jobs
+- [ ] Audit logs are being created
+- [ ] Email notifications working (if configured)
+- [ ] File uploads functional (shapefile imports)
+- [ ] Backups running automatically
+- [ ] Monitoring alerts configured
+- [ ] SSL certificate valid and auto-renewing
+- [ ] Error tracking enabled (Sentry, etc.)
+- [ ] Performance metrics baseline established
+
+## Support and Maintenance
+
+### Regular Maintenance Tasks
+
+**Daily:**
+- Monitor application logs for errors
+- Check worker job queue health
+
+**Weekly:**
+- Review audit logs for suspicious activity
+- Check database size and growth trends
+- Verify backups are completing successfully
+
+**Monthly:**
+- Create next month's `audit_logs` partition
+- Test backup restore procedures
+- Review and rotate access logs
+- Update dependencies (security patches)
+- Review performance metrics
+
+**Quarterly:**
+- Update Node.js and system packages
+- Review and optimize database indexes
+- Conduct security audit
+- Review and update documentation
+
+### Getting Help
+
+For deployment issues:
+1. Check application logs: `pm2 logs`
+2. Check database logs: `/var/log/postgresql/`
+3. Review this documentation
+4. Contact your system administrator
+
+<Warning>
+  Never expose sensitive logs or credentials when seeking support.
+</Warning>

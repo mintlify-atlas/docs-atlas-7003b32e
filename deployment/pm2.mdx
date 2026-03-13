@@ -1,0 +1,428 @@
+---
+title: PM2 Deployment
+description: Deploy SMyEG with PM2 process manager for Windows and Linux
+---
+
+## Overview
+
+PM2 is a production-grade process manager that keeps your Node.js applications running continuously. SMyEG uses PM2 to manage:
+
+- **confor-web**: The Next.js web application
+- **confor-geo-worker**: The geospatial processing worker
+
+This deployment method is ideal for Windows environments or when you prefer not to use Docker.
+
+## Prerequisites
+
+- Node.js 20 or higher
+- PostgreSQL and Redis (running locally or via Docker)
+- Application built in production mode
+
+## Installation
+
+<Steps>
+  <Step title="Install PM2 globally">
+    ```bash
+    npm install -g pm2
+    ```
+  </Step>
+
+  <Step title="Build the application">
+    ```bash
+    pnpm build
+    ```
+    This creates an optimized production build of the Next.js application.
+  </Step>
+
+  <Step title="Start PM2 processes">
+    ```bash
+    pm2 start ecosystem.config.cjs
+    ```
+    This launches both the web app and geo worker as defined in the configuration.
+  </Step>
+
+  <Step title="Verify processes are running">
+    ```bash
+    pm2 status
+    ```
+    You should see both `confor-web` and `confor-geo-worker` with status `online`.
+  </Step>
+</Steps>
+
+## PM2 Configuration
+
+The `ecosystem.config.cjs` file defines two applications:
+
+### Web Application
+
+```javascript
+{
+  name: "confor-web",
+  cwd: ".",
+  script: "cmd",
+  args: "/c pnpm start",
+  env: {
+    NODE_ENV: "production",
+  },
+  autorestart: true,
+  max_restarts: 10,
+  restart_delay: 3000,
+}
+```
+
+**Configuration breakdown:**
+- **name**: Process identifier `confor-web`
+- **script**: Uses Windows `cmd` to run `pnpm start`
+- **env**: Sets `NODE_ENV=production`
+- **autorestart**: Automatically restart on crash
+- **max_restarts**: Stop after 10 restart attempts (prevents crash loops)
+- **restart_delay**: Wait 3 seconds between restarts
+
+### Geo Worker
+
+```javascript
+{
+  name: "confor-geo-worker",
+  cwd: ".",
+  script: "cmd",
+  args: "/c pnpm worker:geo",
+  env: {
+    NODE_ENV: "production",
+    GEO_WORKER_INTERVAL_MS: "5000",
+    GEO_IMPORT_BATCH_SIZE: "500",
+    GEO_RECALC_BATCH_SIZE: "200",
+  },
+  autorestart: true,
+  max_restarts: 20,
+  restart_delay: 3000,
+}
+```
+
+**Configuration breakdown:**
+- **name**: Process identifier `confor-geo-worker`
+- **script**: Runs `pnpm worker:geo` command
+- **GEO_WORKER_INTERVAL_MS**: Poll every 5 seconds (5000ms)
+- **GEO_IMPORT_BATCH_SIZE**: Process up to 500 import jobs per cycle
+- **GEO_RECALC_BATCH_SIZE**: Process up to 200 recalculation jobs per cycle
+- **max_restarts**: 20 attempts (workers may have transient failures)
+
+### Linux Configuration
+
+<Warning>
+  The current `ecosystem.config.cjs` uses Windows-specific `cmd /c` commands.
+</Warning>
+
+For Linux/macOS, modify the configuration:
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: "confor-web",
+      cwd: ".",
+      script: "pnpm",
+      args: "start",
+      env: {
+        NODE_ENV: "production",
+      },
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 3000,
+    },
+    {
+      name: "confor-geo-worker",
+      cwd: ".",
+      script: "pnpm",
+      args: "worker:geo",
+      env: {
+        NODE_ENV: "production",
+        GEO_WORKER_INTERVAL_MS: "5000",
+        GEO_IMPORT_BATCH_SIZE: "500",
+        GEO_RECALC_BATCH_SIZE: "200",
+      },
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 3000,
+    },
+  ],
+};
+```
+
+## Process Management
+
+### View status
+
+```bash
+pm2 status
+```
+
+Shows all processes with CPU, memory usage, and uptime.
+
+### View logs
+
+```bash
+# All processes
+pm2 logs
+
+# Web application only
+pm2 logs confor-web
+
+# Geo worker only
+pm2 logs confor-geo-worker
+
+# Last 100 lines
+pm2 logs --lines 100
+```
+
+### Restart processes
+
+```bash
+# Restart web application
+pm2 restart confor-web
+
+# Restart geo worker
+pm2 restart confor-geo-worker
+
+# Restart all
+pm2 restart all
+```
+
+### Stop processes
+
+```bash
+# Stop web application
+pm2 stop confor-web
+
+# Stop geo worker
+pm2 stop confor-geo-worker
+
+# Stop all
+pm2 stop all
+```
+
+### Delete processes
+
+```bash
+# Remove from PM2
+pm2 delete confor-web
+pm2 delete confor-geo-worker
+
+# Remove all
+pm2 delete all
+```
+
+## Auto-Restart on System Boot
+
+### Windows Setup
+
+<Steps>
+  <Step title="Save PM2 process list">
+    ```bash
+    pm2 save
+    ```
+    This saves the current process configuration.
+  </Step>
+
+  <Step title="Generate startup script">
+    ```bash
+    pm2 startup
+    ```
+    PM2 will display a command to run. Copy and execute it in an **Administrator** command prompt.
+  </Step>
+
+  <Step title="Save configuration again">
+    After running the startup command:
+    ```bash
+    pm2 save
+    ```
+  </Step>
+
+  <Step title="Test auto-restart">
+    Restart your computer and verify processes are running:
+    ```bash
+    pm2 status
+    ```
+  </Step>
+</Steps>
+
+### Linux Setup
+
+<Steps>
+  <Step title="Save PM2 process list">
+    ```bash
+    pm2 save
+    ```
+  </Step>
+
+  <Step title="Generate systemd service">
+    ```bash
+    pm2 startup systemd
+    ```
+    Copy and run the command PM2 displays (requires `sudo`).
+  </Step>
+
+  <Step title="Save configuration">
+    ```bash
+    pm2 save
+    ```
+  </Step>
+
+  <Step title="Enable and verify service">
+    ```bash
+    sudo systemctl status pm2-$USER
+    sudo systemctl enable pm2-$USER
+    ```
+  </Step>
+</Steps>
+
+## Monitoring
+
+### Real-time monitoring
+
+```bash
+pm2 monit
+```
+
+Displays an interactive terminal UI with:
+- CPU and memory usage
+- Live logs
+- Process metadata
+
+### Web-based monitoring (PM2 Plus)
+
+PM2 Plus provides cloud-based monitoring (optional):
+
+```bash
+pm2 plus
+```
+
+Follow the prompts to link your processes.
+
+### Process metrics
+
+```bash
+# Show detailed process info
+pm2 show confor-web
+
+# Show environment variables
+pm2 env 0
+```
+
+## Environment Variables
+
+You can override environment variables when starting PM2:
+
+```bash
+# Single variable
+pm2 start ecosystem.config.cjs --env production
+
+# Multiple variables
+GEO_WORKER_INTERVAL_MS=10000 pm2 start ecosystem.config.cjs
+```
+
+Or update `ecosystem.config.cjs` directly:
+
+```javascript
+env: {
+  NODE_ENV: "production",
+  DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+  REDIS_URL: "redis://localhost:6379",
+  GEO_WORKER_INTERVAL_MS: "5000",
+}
+```
+
+<Warning>
+  Never commit sensitive credentials to version control. Use `.env` files or secret management.
+</Warning>
+
+## Scaling
+
+### Cluster mode
+
+Run multiple instances of the web application:
+
+```javascript
+{
+  name: "confor-web",
+  script: "pnpm",
+  args: "start",
+  instances: 4, // or "max" for CPU count
+  exec_mode: "cluster",
+  env: {
+    NODE_ENV: "production",
+  },
+}
+```
+
+Reload configuration:
+```bash
+pm2 reload ecosystem.config.cjs
+```
+
+<Warning>
+  Cluster mode requires your application to be stateless. Session data should be stored in Redis, not in-memory.
+</Warning>
+
+### Zero-downtime deployments
+
+```bash
+pm2 reload confor-web
+```
+
+Reloads the app one instance at a time (requires cluster mode).
+
+## Troubleshooting
+
+### Process keeps restarting
+
+Check error logs:
+```bash
+pm2 logs confor-web --err --lines 50
+```
+
+Common causes:
+- Missing environment variables
+- Database connection failures
+- Port already in use
+
+### High memory usage
+
+Set memory limits:
+```javascript
+{
+  name: "confor-web",
+  max_memory_restart: "500M", // Restart if exceeds 500MB
+}
+```
+
+### Logs not appearing
+
+Flush logs:
+```bash
+pm2 flush
+```
+
+Configure log rotation:
+```bash
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 7
+```
+
+### PM2 not starting on boot
+
+Verify startup script:
+```bash
+# Windows
+Get-ScheduledTask -TaskName "pm2*"
+
+# Linux
+sudo systemctl status pm2-$USER
+```
+
+Regenerate if needed:
+```bash
+pm2 unstartup
+pm2 startup
+pm2 save
+```

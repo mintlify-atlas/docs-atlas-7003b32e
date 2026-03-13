@@ -1,0 +1,191 @@
+---
+title: Environment Variables
+description: Complete reference for all environment variables used in SMyEG
+---
+
+## Overview
+
+SMyEG uses environment variables to configure database connections, authentication, worker processes, and system behavior. All environment variables should be defined in your `.env` file.
+
+## Database Configuration
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string for the application database.
+  
+  **Format:** `postgresql://USER:PASSWORD@HOST:PORT/DATABASE`
+  
+  **Example:** `postgresql://postgres:postgres@localhost:5432/app_dev`
+  
+  Used by Prisma ORM to connect to the PostgreSQL database.
+</ParamField>
+
+## Authentication
+
+<ParamField path="NEXTAUTH_SECRET" type="string" required>
+  Secret key used by NextAuth v5 to encrypt tokens and sessions.
+  
+  **Generation:** Use `openssl rand -base64 32` to generate a secure random string.
+  
+  **Example:** `your-secret-key-here-use-openssl-rand-base64-32`
+  
+  <Warning>
+    Keep this secret secure. Never commit it to version control.
+  </Warning>
+</ParamField>
+
+<ParamField path="NEXTAUTH_URL" type="string">
+  The canonical URL of your site. Required in production environments.
+  
+  **Example:** `https://smyeg.example.com`
+  
+  **Default:** `http://localhost:3000` (development)
+</ParamField>
+
+## Geospatial Worker Configuration
+
+The geospatial worker handles asynchronous processing of shapefile imports and area recalculations for Level 4 forest patrimony units.
+
+<ParamField path="GEO_WORKER_INTERVAL_MS" type="integer" default="4000">
+  Polling interval in milliseconds between worker cycles.
+  
+  Controls how frequently the worker checks for pending jobs.
+  
+  **Minimum:** `1000` (1 second)
+  
+  **Recommended:** `4000` (4 seconds) for production
+</ParamField>
+
+<ParamField path="GEO_IMPORT_BATCH_SIZE" type="integer" default="5">
+  Maximum number of import jobs processed per worker cycle.
+  
+  Limits concurrent shapefile imports to prevent resource exhaustion.
+  
+  **Range:** `1-20`
+  
+  **Default:** `5`
+</ParamField>
+
+<ParamField path="GEO_RECALC_BATCH_SIZE" type="integer" default="10">
+  Maximum number of recalculation jobs processed per worker cycle.
+  
+  Controls concurrent geometry recalculation operations.
+  
+  **Range:** `1-50`
+  
+  **Default:** `10`
+</ParamField>
+
+<ParamField path="GEO_WORKER_RUN_ONCE" type="boolean" default="false">
+  When set to `true`, the worker executes a single cycle and then exits.
+  
+  Useful for testing, manual execution, or scheduled batch processing.
+  
+  **Values:**
+  - `true` - Run once and exit
+  - `false` - Continuous operation (default)
+</ParamField>
+
+## Redis Configuration
+
+<ParamField path="REDIS_URL" type="string">
+  Redis connection URL for caching and session storage.
+  
+  **Format:** `redis://HOST:PORT`
+  
+  **Example:** `redis://localhost:6379`
+</ParamField>
+
+## Application Settings
+
+<ParamField path="NODE_ENV" type="string" default="development">
+  Application environment mode.
+  
+  **Values:**
+  - `development` - Development mode with hot reload
+  - `production` - Production mode with optimizations
+  - `test` - Testing environment
+</ParamField>
+
+<ParamField path="PORT" type="integer" default="3000">
+  Port number for the Next.js application server.
+  
+  **Default:** `3000`
+</ParamField>
+
+<ParamField path="LOG_LEVEL" type="string" default="info">
+  Application logging level.
+  
+  **Values:** `error`, `warn`, `info`, `debug`, `trace`
+</ParamField>
+
+## Example Configuration
+
+```bash .env
+# Database
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/app_dev"
+
+# Authentication
+NEXTAUTH_SECRET="your-secret-key-here"
+NEXTAUTH_URL="http://localhost:3000"
+
+# Geospatial Worker
+GEO_WORKER_INTERVAL_MS=4000
+GEO_IMPORT_BATCH_SIZE=5
+GEO_RECALC_BATCH_SIZE=10
+GEO_WORKER_RUN_ONCE=false
+
+# Redis
+REDIS_URL="redis://localhost:6379"
+
+# Application
+NODE_ENV="development"
+PORT=3000
+LOG_LEVEL="info"
+```
+
+## Running the Geospatial Worker
+
+### Continuous Mode (Production)
+
+```bash
+pnpm worker:geo
+```
+
+Runs the worker continuously with the configured polling interval.
+
+### Single Execution Mode (Testing)
+
+```bash
+pnpm worker:geo:once
+```
+
+Or set the environment variable:
+
+```bash
+GEO_WORKER_RUN_ONCE=true pnpm worker:geo
+```
+
+Executes one worker cycle and exits. Useful for:
+- Testing worker configuration
+- Manual job processing
+- Cron-based scheduled execution
+
+<Info>
+  The geospatial worker processes pending shapefile import jobs and geometry recalculation jobs. It automatically handles coordinate transformation to EPSG:4326 and validates geometries.
+</Info>
+
+## Security Best Practices
+
+1. **Never commit `.env` files** to version control
+2. **Use strong secrets** - Generate `NEXTAUTH_SECRET` with `openssl rand -base64 32`
+3. **Restrict database access** - Use dedicated database users with minimal permissions
+4. **Use environment-specific configs** - Separate `.env.development`, `.env.production`
+5. **Encrypt secrets in production** - Use secret management tools (AWS Secrets Manager, Vault, etc.)
+
+## Validation
+
+The application validates required environment variables on startup. Missing required variables will cause the application to fail with descriptive error messages.
+
+<Check>
+  Use `.env.example` as a template when setting up new environments.
+</Check>

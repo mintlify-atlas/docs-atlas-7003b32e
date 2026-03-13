@@ -1,0 +1,734 @@
+---
+title: Background Workers
+description: Geo worker scheduler, asset measurement worker, configuration via environment variables, and monitoring job status
+---
+
+## Overview
+
+SMyEG uses dedicated background workers to process asynchronous tasks like shapefile imports, geometry recalculations, land use variations, and measurement campaign calculations. Workers run as separate Node.js processes and poll the database for pending jobs.
+
+## Worker Architecture
+
+### Available Workers
+
+<CardGroup cols={2}>
+  <Card title="Geo Worker" icon="map" href="#geo-worker-scheduler">
+    Processes shapefile imports, geometry recalculations, and land use variations.
+  </Card>
+  <Card title="Asset Measurement Worker" icon="chart-line" href="#asset-measurement-worker">
+    Calculates metrics and summaries for measurement campaigns.
+  </Card>
+</CardGroup>
+
+### Worker Pattern
+
+Both workers follow a polling pattern:
+
+1. Query database for pending jobs
+2. Lock job by updating status to `PROCESSING`
+3. Execute job logic
+4. Update job with result (`COMPLETED` or `FAILED`)
+5. Sleep for configured interval
+6. Repeat
+
+## Geo Worker Scheduler
+
+### Purpose
+
+The geo worker processes three types of jobs:
+
+- **Import Jobs** - Extract and validate shapefiles, import geometries
+- **Recalc Jobs** - Recalculate area and centroids for existing geometries  
+- **Variation Jobs** - Create land use variation records in bulk
+
+### Starting the Geo Worker
+
+From `README.md:59-78`:
+
+```bash
+# Development mode (continuous)
+pnpm worker:geo
+
+# Run once and exit (useful for testing)
+pnpm worker:geo:once
+```
+
+### Configuration via Environment Variables
+
+From `src/workers/geo-worker-scheduler.ts:5-9`:
+
+```typescript
+const intervalMs = Number.parseInt(
+  process.env.GEO_WORKER_INTERVAL_MS ?? '4000', 10
+);
+const importBatchSize = Number.parseInt(
+  process.env.GEO_IMPORT_BATCH_SIZE ?? '5', 10
+);
+const recalcBatchSize = Number.parseInt(
+  process.env.GEO_RECALC_BATCH_SIZE ?? '10', 10
+);
+const variationBatchSize = Number.parseInt(
+  process.env.GEO_VARIATION_BATCH_SIZE ?? '15', 10
+);
+const runOnce = process.env.GEO_WORKER_RUN_ONCE === 'true';
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEO_WORKER_INTERVAL_MS` | 4000 | Milliseconds between polling cycles |
+| `GEO_IMPORT_BATCH_SIZE` | 5 | Maximum import jobs per cycle |
+| `GEO_RECALC_BATCH_SIZE` | 10 | Maximum recalc jobs per cycle |
+| `GEO_VARIATION_BATCH_SIZE` | 15 | Maximum variation jobs per cycle |
+| `GEO_WORKER_RUN_ONCE` | false | Exit after one cycle (for testing) |
+
+### Worker Execution Loop
+
+From `src/workers/geo-worker-scheduler.ts:18-64`:
+
+```typescript
+async function runBatch() {
+  if (running || stopped) return;
+  running = true;
+
+  try {
+    let importProcessed = 0;
+    let recalcProcessed = 0;
+    let variationProcessed = 0;
+
+    // Process import jobs
+    for (let i = 0; i < importBatchSize; i += 1) {
+      const result = await processNextPendingImportJob();
+      if (!result.processed) break;
+      importProcessed += 1;
+    }
+
+    // Process recalc jobs
+    for (let i = 0; i < recalcBatchSize; i += 1) {
+      const result = await processNextRecalcJob();
+      if (!result.processed) break;
+      recalcProcessed += 1;
+    }
+
+    // Process variation jobs
+    for (let i = 0; i < variationBatchSize; i += 1) {
+      const result = await processNextGeoVariationJob();
+      if (!result.processed) break;
+      variationProcessed += 1;
+    }
+
+    if (importProcessed > 0 || recalcProcessed > 0 || variationProcessed > 0) {
+      console.info(
+        `[${now()}] [geo-worker] processed import_jobs=${importProcessed} ` +
+        `recalc_jobs=${recalcProcessed} variation_jobs=${variationProcessed}`
+      );
+    }
+  } catch (error) {
+    console.error(`[${now()}] [geo-worker] batch error`, error);
+  } finally {
+    running = false;
+  }
+}
+```
+
+### Import Job Processing
+
+From `src/lib/geo-import-worker.ts:232-547`, the import worker:
+
+<Steps>
+  <Step title="Extract ZIP">
+    Load ZIP file and validate required extensions (.shp, .shx, .dbf, .prj)
+  </Step>
+  <Step title="Parse Shapefile">
+    Use `shpjs` library to parse shapefile into GeoJSON FeatureCollection
+  </Step>
+  <Step title="Process Features">
+    For each feature:
+    - Extract hierarchy codes (nivel2_id, nivel3_id, nivel4_id)
+    - Validate hierarchy exists in database
+    - Normalize geometry (Polygon → MultiPolygon)
+    - Transform to EPSG:4326
+    - Validate land use types
+    - Insert geometry with bitemporal tracking
+    - Calculate area and centroid using PostGIS
+    - Update Level 4 record
+    - Create land use variation if applicable
+  </Step>
+  <Step title="Sync Land Use Totals">
+    Aggregate surface area by land use type across all Level 4 units
+  </Step>
+  <Step title="Complete Job">
+    Update job status with counts: processedRecords, failedRecords
+  </Step>
+</Steps>
+
+### Recalc Job Processing
+
+From `src/lib/geo-import-worker.ts:579-663`:
+
+```typescript
+export async function processNextRecalcJob() {
+  const job = await prisma.forestGeometryRecalcJob.findFirst({
+    where: {
+      status: GeoRecalcJobStatus.PENDING,
+      runAfter: { lte: new Date() },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (!job) {
+    return { processed: false, reason: 'no_pending_recalc_jobs' };
+  }
+
+  // Mark as processing
+  await prisma.forestGeometryRecalcJob.update({
+    where: { id: job.id },
+    data: {
+      status: GeoRecalcJobStatus.PROCESSING,
+      startedAt: new Date(),
+      attempts: { increment: 1 },
+    },
+  });
+
+  // Query PostGIS for recalculated metrics
+  const metrics = await prisma.$queryRaw`
+    SELECT
+      superficie_ha::double precision AS superficie_ha,
+      ST_Y(centroid) AS lat,
+      ST_X(centroid) AS lon
+    FROM public.forest_geometry_n4
+    WHERE organization_id = ${job.organizationId}::uuid
+      AND level4_id = ${job.level4Id}::uuid
+      AND is_active = TRUE
+    ORDER BY valid_from DESC
+    LIMIT 1
+  `;
+
+  // Update Level 4 with new metrics
+  await tx.forestPatrimonyLevel4.update({
+    where: { id: job.level4Id },
+    data: {
+      totalAreaHa: metric.superficie_ha,
+      centroidLatitude: metric.lat,
+      centroidLongitude: metric.lon,
+    },
+  });
+
+  // Sync land use totals
+  await syncLandUseSurfaceTotals(tx, job.organizationId);
+}
+```
+
+### Variation Job Processing
+
+From `src/lib/geo-import-worker.ts:687-806`, variation jobs create bulk land use change records:
+
+```typescript
+export async function processNextGeoVariationJob() {
+  const job = await prisma.geoLandVariationJob.findFirst({
+    where: {
+      status: GeoVariationJobStatus.PENDING,
+      runAfter: { lte: new Date() },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (!job) return { processed: false };
+
+  const payload = job.payload as { items?: GeoVariationPayloadItem[] };
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+
+  for (const item of items) {
+    const level4 = await prisma.forestPatrimonyLevel4.findFirst({
+      where: {
+        id: level4Id,
+        level3: { level2: { organizationId: job.organizationId } },
+      },
+    });
+
+    if (!level4) continue;
+
+    await prisma.landPatrimonialVariation.create({
+      data: {
+        organizationId: job.organizationId,
+        level4Id: level4.id,
+        previousLandUseName,
+        newLandUseName,
+        affectedAreaHa,
+        variationDate: job.variationDate,
+        notes: job.notes,
+        kind: 'INCREMENTO',
+        status: 'PENDIENTE',
+        createdById: job.createdById,
+      },
+    });
+  }
+}
+```
+
+### Graceful Shutdown
+
+From `src/workers/geo-worker-scheduler.ts:66-79`:
+
+```typescript
+async function shutdown(signal: string) {
+  if (stopped) return;
+  stopped = true;
+  console.info(`[${now()}] [geo-worker] stopping scheduler (${signal})...`);
+
+  try {
+    await prisma.$disconnect();
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.on('SIGINT', () => {
+  clearInterval(timer);
+  void shutdown('SIGINT');
+});
+
+process.on('SIGTERM', () => {
+  clearInterval(timer);
+  void shutdown('SIGTERM');
+});
+```
+
+## Asset Measurement Worker
+
+### Purpose
+
+The asset measurement worker calculates metrics and generates result snapshots for measurement campaigns based on collected observations.
+
+### Starting the Asset Worker
+
+Add to your `package.json`:
+
+```json
+{
+  "scripts": {
+    "worker:asset": "tsx src/workers/asset-measurement-worker-scheduler.ts",
+    "worker:asset:once": "ASSET_MEASUREMENT_WORKER_RUN_ONCE=true tsx src/workers/asset-measurement-worker-scheduler.ts"
+  }
+}
+```
+
+Run the worker:
+
+```bash
+pnpm worker:asset
+```
+
+### Configuration via Environment Variables
+
+From `src/workers/asset-measurement-worker-scheduler.ts:5-7`:
+
+```typescript
+const intervalMs = Number.parseInt(
+  process.env.ASSET_MEASUREMENT_WORKER_INTERVAL_MS ?? '4000', 10
+);
+const batchSize = Number.parseInt(
+  process.env.ASSET_MEASUREMENT_WORKER_BATCH_SIZE ?? '20', 10
+);
+const runOnce = process.env.ASSET_MEASUREMENT_WORKER_RUN_ONCE === 'true';
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASSET_MEASUREMENT_WORKER_INTERVAL_MS` | 4000 | Milliseconds between polling cycles |
+| `ASSET_MEASUREMENT_WORKER_BATCH_SIZE` | 20 | Maximum calculation jobs per cycle |
+| `ASSET_MEASUREMENT_WORKER_RUN_ONCE` | false | Exit after one cycle |
+
+### Worker Execution Loop
+
+From `src/workers/asset-measurement-worker-scheduler.ts:16-42`:
+
+```typescript
+async function runBatch() {
+  if (running || stopped) return;
+  running = true;
+
+  try {
+    let processed = 0;
+
+    for (let i = 0; i < batchSize; i += 1) {
+      const result = await processNextAssetCalculationJob();
+      if (!result.processed) break;
+      processed += 1;
+    }
+
+    if (processed > 0) {
+      console.info(
+        `[${now()}] [asset-worker] processed calculation_jobs=${processed}`
+      );
+    }
+  } catch (error) {
+    console.error(`[${now()}] [asset-worker] batch error`, error);
+  } finally {
+    running = false;
+  }
+}
+```
+
+### Calculation Job Processing
+
+From `src/lib/asset-measurement-worker.ts:1314-1441`:
+
+<Steps>
+  <Step title="Fetch Job">
+    Query for oldest pending calculation job with `runAfter <= NOW()`
+  </Step>
+  <Step title="Load Campaign Data">
+    Fetch campaign with all related observations
+  </Step>
+  <Step title="Calculate Summary">
+    Compute observation counts by section and level5Unit
+  </Step>
+  <Step title="Build Protocol Result">
+    Execute protocol-specific calculation formula based on `protocolType`:
+    - BIO_SOBREVIVENCIA → `buildBioSurvivalResult()`
+    - BIO_PREOPERATIVO → `buildBioPreoperativoResult()`
+    - DENDRO_PARCELA_CARBONO → `buildDendroCarbonoResult()`
+    - etc.
+  </Step>
+  <Step title="Store Result Snapshot">
+    Create versioned result snapshot with:
+    - Metrics (protocol-specific KPIs)
+    - Quality indicators
+    - Summary statistics
+  </Step>
+  <Step title="Mark Current">
+    Set new snapshot as `isCurrent: true`, mark previous snapshots as `isCurrent: false`
+  </Step>
+</Steps>
+
+### Protocol Calculation Example: BIO_SOBREVIVENCIA
+
+From `src/lib/asset-measurement-worker.ts:154-306`:
+
+```typescript
+function buildBioSurvivalResult(observations: WorkerObservation[]) {
+  let sumLiveTotal = 0;
+  let sumDeadTotal = 0;
+  let sumMissingCount = 0;
+  let sumExpectedPlants = 0;
+  const liveTotalsPerParcel: number[] = [];
+
+  // Validate and accumulate each observation
+  for (const observation of observations) {
+    const payload = asObject(observation.payload);
+    const liveNormal = readNumber(payload, 'liveNormal');
+    const liveAtipic = readNumber(payload, 'liveAtipic') ?? 0;
+    // ... read all fields
+
+    const liveTotal = liveNormal + liveAtipic + liveDrought + livePest;
+    const deadTotal = deadPest + deadDrought + deadMech;
+    const evaluatedPoints = liveTotal + deadTotal + missingCount;
+    const expectedPoints = 100 / (spacingL1 * spacingL2);
+
+    // Validation
+    if (Math.abs(evaluatedPoints - expectedPoints) > 1) {
+      invalidObservationCount += 1;
+      continue;
+    }
+
+    sumLiveTotal += liveTotal;
+    sumDeadTotal += deadTotal;
+    liveTotalsPerParcel.push(liveTotal);
+  }
+
+  // Calculate metrics
+  const totalObserved = sumLiveTotal + sumDeadTotal + sumMissingCount;
+  const survivalRealPct = (sumLiveTotal / totalObserved) * 100;
+  const densityVivaHa = (sumLiveTotal / validObservationCount) * 100;
+
+  // Calculate sampling error using t-student
+  const mean = liveTotalsPerParcel.reduce((a, b) => a + b, 0) / n;
+  const variance = liveTotalsPerParcel.reduce((a, v) => a + (v - mean) ** 2, 0) / (n - 1);
+  const stdDev = Math.sqrt(variance);
+  const tValue = tStudent95ByDegrees(n - 1);
+  const samplingErrorPct = ((tValue * (stdDev / Math.sqrt(n))) / mean) * 100;
+
+  // Decision logic
+  const survivalSemaforo = classifySurvivalSemaforo(survivalRealPct);
+  const survivalDecision = classifySurvivalDecision(survivalRealPct);
+
+  return {
+    protocolType: MeasurementProtocolType.BIO_SOBREVIVENCIA,
+    metrics: {
+      SURVIVAL_REAL_PCT: roundOrNull(survivalRealPct, 2),
+      DENSITY_VIVA_HA: roundOrNull(densityVivaHa, 0),
+      SAMPLING_ERROR_PCT: roundOrNull(samplingErrorPct, 2),
+      SURVIVAL_SEMAFORO: survivalSemaforo,
+      OPERATIONAL_ACTION: survivalDecision.operationalAction,
+    },
+    quality: {
+      validObservationCount,
+      invalidObservationCount,
+      zeroLiveObservationCount,
+    },
+  };
+}
+```
+
+### Result Snapshot Versioning
+
+From `src/lib/asset-measurement-worker.ts:1376-1406`:
+
+```typescript
+await prisma.$transaction(async (tx) => {
+  // Mark previous snapshots as not current
+  await tx.assetResultSnapshot.updateMany({
+    where: {
+      campaignId: job.campaignId,
+      resultKey,
+      isCurrent: true,
+    },
+    data: { isCurrent: false },
+  });
+
+  // Create new current snapshot
+  await tx.assetResultSnapshot.create({
+    data: {
+      campaignId: job.campaignId,
+      level4Id: job.campaign.level4Id,
+      domain: job.campaign.domain,
+      resultKey,
+      resultVersion: nextVersion,
+      schemaVersion: '1.0',
+      resultPayload: {
+        summary,
+        metrics: protocolResult.metrics,
+        quality: protocolResult.quality,
+        protocolType: job.campaign.protocolType,
+        generatedBy: 'asset-measurement-worker',
+        formulaVersion: hasSpecializedFormula(protocolType) ? '1.0.0' : '0.0.0',
+      },
+      isCurrent: true,
+      calculatedAt: new Date(),
+    },
+  });
+});
+```
+
+<Info>
+Each calculation creates a new versioned snapshot. The `isCurrent` flag marks the latest result, while historical versions are preserved.
+</Info>
+
+## Monitoring Job Status
+
+### Geo Import Jobs
+
+Query import job status:
+
+```typescript
+const job = await fetch(`/api/forest/geo/import/${jobId}`);
+const status = await job.json();
+
+console.log({
+  status: status.status,
+  totalRecords: status.totalRecords,
+  processedRecords: status.processedRecords,
+  failedRecords: status.failedRecords,
+  errorMessage: status.errorMessage,
+  startedAt: status.startedAt,
+  completedAt: status.completedAt,
+});
+```
+
+### Asset Calculation Jobs
+
+Query calculation job status:
+
+```typescript
+const jobs = await fetch('/api/assets/calculation-jobs?campaignId=' + campaignId);
+const { items } = await jobs.json();
+
+items.forEach(job => {
+  console.log({
+    id: job.id,
+    status: job.status,
+    protocolType: job.protocolType,
+    attempts: job.attempts,
+    errorMessage: job.errorMessage,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+  });
+});
+```
+
+### Job Statuses
+
+| Status | Description |
+|--------|-------------|
+| `PENDING` | Queued, waiting for worker to pick up |
+| `PROCESSING` | Currently being processed by worker |
+| `COMPLETED` | Successfully completed |
+| `FAILED` | Processing failed (see `errorMessage`) |
+
+### Worker Logs
+
+Workers output structured logs to stdout:
+
+```
+[2026-03-13T10:15:00.000Z] [geo-worker] started (interval=4000ms, importBatch=5, recalcBatch=10, variationBatch=15, runOnce=false)
+[2026-03-13T10:15:04.123Z] [geo-worker] processed import_jobs=2 recalc_jobs=5 variation_jobs=0
+[2026-03-13T10:15:08.456Z] [geo-worker] processed import_jobs=0 recalc_jobs=3 variation_jobs=1
+```
+
+```
+[2026-03-13T10:20:00.000Z] [asset-worker] started (interval=4000ms, batch=20, runOnce=false)
+[2026-03-13T10:20:04.789Z] [asset-worker] processed calculation_jobs=3
+```
+
+## Running Workers in Production
+
+### Using PM2 (Recommended)
+
+From `README.md:80-134`, configure `ecosystem.config.cjs`:
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: 'smyeg-web',
+      script: 'node_modules/next/dist/bin/next',
+      args: 'start',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+      },
+    },
+    {
+      name: 'smyeg-geo-worker',
+      script: 'tsx',
+      args: 'src/workers/geo-worker-scheduler.ts',
+      env: {
+        NODE_ENV: 'production',
+        GEO_WORKER_INTERVAL_MS: 5000,
+        GEO_IMPORT_BATCH_SIZE: 3,
+      },
+    },
+    {
+      name: 'smyeg-asset-worker',
+      script: 'tsx',
+      args: 'src/workers/asset-measurement-worker-scheduler.ts',
+      env: {
+        NODE_ENV: 'production',
+        ASSET_MEASUREMENT_WORKER_INTERVAL_MS: 5000,
+        ASSET_MEASUREMENT_WORKER_BATCH_SIZE: 15,
+      },
+    },
+  ],
+};
+```
+
+Start all processes:
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup
+```
+
+Monitor workers:
+
+```bash
+pm2 status
+pm2 logs smyeg-geo-worker
+pm2 logs smyeg-asset-worker
+pm2 restart smyeg-geo-worker
+```
+
+### Using Docker
+
+Create a `docker-compose.yml` with worker services:
+
+```yaml
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://...
+  
+  geo-worker:
+    build: .
+    command: pnpm worker:geo
+    environment:
+      - DATABASE_URL=postgresql://...
+      - GEO_WORKER_INTERVAL_MS=5000
+      - GEO_IMPORT_BATCH_SIZE=3
+  
+  asset-worker:
+    build: .
+    command: pnpm worker:asset
+    environment:
+      - DATABASE_URL=postgresql://...
+      - ASSET_MEASUREMENT_WORKER_INTERVAL_MS=5000
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Monitor Worker Health" icon="heartbeat">
+    Use PM2 or container orchestration to automatically restart failed workers.
+  </Card>
+  <Card title="Tune Batch Sizes" icon="sliders">
+    Adjust batch sizes based on database load and average job processing time.
+  </Card>
+  <Card title="Set Reasonable Intervals" icon="clock">
+    Start with 4-5 second intervals. Increase if workers are idle, decrease if jobs are backing up.
+  </Card>
+  <Card title="Review Failed Jobs" icon="magnifying-glass">
+    Regularly check failed jobs and fix data issues or validation logic.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Worker Not Processing Jobs
+
+<Steps>
+  <Step title="Check Worker is Running">
+    Verify process is running: `pm2 status` or `docker ps`
+  </Step>
+  <Step title="Check Database Connection">
+    Ensure `DATABASE_URL` is correct and database is accessible
+  </Step>
+  <Step title="Check Job Status">
+    Query jobs table to ensure jobs are in `PENDING` status, not stuck in `PROCESSING`
+  </Step>
+  <Step title="Review Logs">
+    Check worker stdout/stderr for errors: `pm2 logs` or `docker logs`
+  </Step>
+</Steps>
+
+### Jobs Stuck in PROCESSING
+
+If a worker crashes mid-job, jobs may be stuck in `PROCESSING` status. Manually reset:
+
+```sql
+UPDATE "GeoImportJob"
+SET status = 'PENDING',
+    "startedAt" = NULL
+WHERE status = 'PROCESSING'
+  AND "startedAt" < NOW() - INTERVAL '10 minutes';
+```
+
+### High Memory Usage
+
+Reduce batch sizes to process fewer jobs per cycle:
+
+```bash
+export GEO_IMPORT_BATCH_SIZE=2
+export ASSET_MEASUREMENT_WORKER_BATCH_SIZE=10
+```
+
+## Related Files
+
+- Geo worker scheduler: `src/workers/geo-worker-scheduler.ts`
+- Geo import logic: `src/lib/geo-import-worker.ts`
+- Asset worker scheduler: `src/workers/asset-measurement-worker-scheduler.ts`  
+- Asset calculation logic: `src/lib/asset-measurement-worker.ts`
+- PM2 config: `ecosystem.config.cjs`

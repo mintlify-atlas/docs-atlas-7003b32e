@@ -1,0 +1,498 @@
+---
+title: Forest Configuration
+description: Manage forest configuration catalogs - species, land use types, management schemes, and more
+---
+
+## Overview
+
+The Forest Configuration API provides CRUD operations for various catalog entities used throughout the forest management system:
+
+- **Species** (`/api/forest/config/species`): Plant taxonomic data
+- **Land Use Types** (`/api/forest/config/land-use-types`): Land classification categories
+- **Management Schemes** (`/api/forest/config/management-schemes`): Forest management approaches
+- **IMA Classes** (`/api/forest/config/ima-classes`): Increment classification
+- **Inventory Types** (`/api/forest/config/inventory-types`): Inventory methodologies
+- **Product Types** (`/api/forest/config/product-types`): Harvested product specifications
+- **Vegetal Materials** (`/api/forest/config/vegetal-materials`): Planting material catalog
+- **Provenances** (`/api/forest/config/provenances`): Geographic origins
+- **Spacings** (`/api/forest/config/spacings`): Planting density configurations
+- **Level 4 Costs** (`/api/forest/config/level4-costs`): Administrative cost tracking
+
+All endpoints require `forest-config:READ`, `forest-config:CREATE`, `forest-config:UPDATE`, or `forest-config:DELETE` permissions.
+
+## Common Endpoint Pattern
+
+All configuration endpoints follow a consistent REST pattern:
+
+- `GET` - List records with pagination
+- `POST` - Create new record
+- `PATCH` - Update existing record
+- `DELETE` - Delete record by ID
+
+## List Records
+
+<CodeGroup>
+```bash GET /api/forest/config/{resource}
+curl -X GET "https://api.smyeg.com/api/forest/config/species?page=1&limit=25&search=pinus" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="page" type="number" default="1">
+  Page number (min: 1)
+</ParamField>
+
+<ParamField query="limit" type="number" default="25">
+  Items per page (min: 1, max: 100)
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search term (case-insensitive, searches `code` and `name` fields)
+</ParamField>
+
+<ParamField query="sortBy" type="string" default="createdAt">
+  Field to sort by (varies by resource)
+</ParamField>
+
+<ParamField query="sortOrder" type="enum" default="desc">
+  Sort direction: `asc` or `desc`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of configuration records
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  <ResponseField name="total" type="number">
+    Total number of records
+  </ResponseField>
+  
+  <ResponseField name="page" type="number">
+    Current page
+  </ResponseField>
+  
+  <ResponseField name="limit" type="number">
+    Items per page
+  </ResponseField>
+  
+  <ResponseField name="totalPages" type="number">
+    Total number of pages
+  </ResponseField>
+</ResponseField>
+
+## Species
+
+### Create Species
+
+<CodeGroup>
+```bash POST /api/forest/config/species
+curl -X POST "https://api.smyeg.com/api/forest/config/species" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "PIN-CAR",
+    "scientificName": "Pinus caribaea",
+    "commonName": "Pino caribeño",
+    "genus": "Pinus",
+    "family": "Pinaceae",
+    "taxonomicOrder": "Pinales",
+    "isActive": true
+  }'
+```
+</CodeGroup>
+
+#### Request Body
+
+<ParamField body="code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="scientificName" type="string" required>
+  Scientific name (1-255 characters)
+</ParamField>
+
+<ParamField body="commonName" type="string">
+  Common name (max 255 characters)
+</ParamField>
+
+<ParamField body="genus" type="string">
+  Taxonomic genus
+</ParamField>
+
+<ParamField body="family" type="string">
+  Taxonomic family
+</ParamField>
+
+<ParamField body="taxonomicOrder" type="string">
+  Taxonomic order
+</ParamField>
+
+<ParamField body="isActive" type="boolean" default="true">
+  Whether the species is active
+</ParamField>
+
+#### Response
+
+<ResponseExample>
+```json HTTP 201 Created
+{
+  "id": "species-uuid",
+  "organizationId": "org-uuid",
+  "code": "PIN-CAR",
+  "scientificName": "Pinus caribaea",
+  "commonName": "Pino caribeño",
+  "genus": "Pinus",
+  "family": "Pinaceae",
+  "taxonomicOrder": "Pinales",
+  "isActive": true,
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-01-15T10:30:00Z"
+}
+```
+</ResponseExample>
+
+### Delete Species
+
+<CodeGroup>
+```bash DELETE /api/forest/config/species
+curl -X DELETE "https://api.smyeg.com/api/forest/config/species" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "species-uuid"
+  }'
+```
+</CodeGroup>
+
+**Note**: Cannot delete species if related vegetal materials exist.
+
+## Land Use Types
+
+### Create Land Use Type
+
+<CodeGroup>
+```bash POST /api/forest/config/land-use-types
+curl -X POST "https://api.smyeg.com/api/forest/config/land-use-types" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "BP-PRIM",
+    "name": "Bosque Primario",
+    "category": "BOSQUE",
+    "isProductive": true,
+    "isActive": true
+  }'
+```
+</CodeGroup>
+
+#### Request Body
+
+<ParamField body="code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Type name (1-150 characters)
+</ParamField>
+
+<ParamField body="category" type="enum" required>
+  Category: `BOSQUE`, `NO BOSQUE`, `BOSQUE DEFORESTADO`, `BOSQUE DEGRADADO`, `CUERPOS DE AGUA`, `SUELO DESNUDO`, `INFRAESTRUCTURA`
+</ParamField>
+
+<ParamField body="isProductive" type="boolean" default="false">
+  Whether the land use is productive
+</ParamField>
+
+<ParamField body="isActive" type="boolean" default="true">
+  Whether the type is active
+</ParamField>
+
+#### Response
+
+<ResponseExample>
+```json HTTP 201 Created
+{
+  "id": "landuse-uuid",
+  "organizationId": "org-uuid",
+  "continentId": null,
+  "code": "BP-PRIM",
+  "name": "Bosque Primario",
+  "category": "BOSQUE",
+  "isProductive": true,
+  "isActive": true,
+  "surfaceHa": null,
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-01-15T10:30:00Z"
+}
+```
+</ResponseExample>
+
+## Management Schemes
+
+### Create Management Scheme
+
+<CodeGroup>
+```bash POST /api/forest/config/management-schemes
+curl -X POST "https://api.smyeg.com/api/forest/config/management-schemes" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "TALR-SEL",
+    "name": "Tala Rasa Selectiva",
+    "isActive": true
+  }'
+```
+</CodeGroup>
+
+#### Request Body
+
+<ParamField body="code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Scheme name (1-255 characters)
+</ParamField>
+
+<ParamField body="isActive" type="boolean" default="true">
+  Whether the scheme is active
+</ParamField>
+
+## IMA Classes
+
+### Create IMA Class
+
+<CodeGroup>
+```bash POST /api/forest/config/ima-classes
+curl -X POST "https://api.smyeg.com/api/forest/config/ima-classes" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "IMA-I",
+    "classification": "I",
+    "name": "Clase I - Muy Alto",
+    "description": "Incremento superior a 30 m3/ha/año",
+    "rangeMin": 30.0,
+    "rangeMax": null,
+    "isActive": true
+  }'
+```
+</CodeGroup>
+
+#### Request Body
+
+<ParamField body="code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="classification" type="enum" required>
+  Classification: `I`, `II`, `III`, `IV`, `V`
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Class name (1-120 characters)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Class description
+</ParamField>
+
+<ParamField body="rangeMin" type="number">
+  Minimum value for range (m³/ha/year)
+</ParamField>
+
+<ParamField body="rangeMax" type="number">
+  Maximum value for range (m³/ha/year)
+</ParamField>
+
+<ParamField body="isActive" type="boolean" default="true">
+  Whether the class is active
+</ParamField>
+
+## Product Types
+
+### Create Product Type
+
+<CodeGroup>
+```bash POST /api/forest/config/product-types
+curl -X POST "https://api.smyeg.com/api/forest/config/product-types" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "TROZ-ASER",
+    "name": "Trozas para aserradero",
+    "minLengthM": 2.5,
+    "maxLengthM": 6.0,
+    "minSmallEndDiameterCm": 20.0,
+    "maxSmallEndDiameterCm": null,
+    "recommendedHarvestType": "MECANIZADA",
+    "isActive": true
+  }'
+```
+</CodeGroup>
+
+#### Request Body
+
+<ParamField body="code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Product name (1-150 characters)
+</ParamField>
+
+<ParamField body="minLengthM" type="number">
+  Minimum length in meters
+</ParamField>
+
+<ParamField body="maxLengthM" type="number">
+  Maximum length in meters
+</ParamField>
+
+<ParamField body="minSmallEndDiameterCm" type="number">
+  Minimum small-end diameter in centimeters
+</ParamField>
+
+<ParamField body="maxSmallEndDiameterCm" type="number">
+  Maximum small-end diameter in centimeters
+</ParamField>
+
+<ParamField body="recommendedHarvestType" type="enum" required>
+  Harvest type: `MECANIZADA` or `MANUAL`
+</ParamField>
+
+<ParamField body="isActive" type="boolean" default="true">
+  Whether the product type is active
+</ParamField>
+
+## Spacings
+
+### Create Spacing
+
+<CodeGroup>
+```bash POST /api/forest/config/spacings
+curl -X POST "https://api.smyeg.com/api/forest/config/spacings" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "3X2",
+    "name": "3m x 2m",
+    "description": "Espaciamiento estándar para plantaciones",
+    "betweenRowsM": 3.0,
+    "betweenTreesM": 2.0,
+    "treeDensityPerHa": 1666.67,
+    "isActive": true
+  }'
+```
+</CodeGroup>
+
+#### Request Body
+
+<ParamField body="code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Spacing name (1-150 characters)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Description of spacing configuration
+</ParamField>
+
+<ParamField body="betweenRowsM" type="number">
+  Distance between rows in meters
+</ParamField>
+
+<ParamField body="betweenTreesM" type="number">
+  Distance between trees in meters
+</ParamField>
+
+<ParamField body="treeDensityPerHa" type="number">
+  Trees per hectare
+</ParamField>
+
+<ParamField body="isActive" type="boolean" default="true">
+  Whether the spacing is active
+</ParamField>
+
+## Update Pattern
+
+All configuration endpoints support partial updates via `PATCH`:
+
+<CodeGroup>
+```bash PATCH /api/forest/config/{resource}
+curl -X PATCH "https://api.smyeg.com/api/forest/config/species" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "species-uuid",
+    "commonName": "Pino del Caribe",
+    "isActive": false
+  }'
+```
+</CodeGroup>
+
+**Request Body**: Include `id` (required) plus any fields to update (at least one required).
+
+## Error Responses
+
+### Duplicate Code
+
+<ResponseExample>
+```json HTTP 409
+{
+  "error": "Ya existe un registro con ese código",
+  "statusCode": 409
+}
+```
+</ResponseExample>
+
+### Invalid Relation
+
+<ResponseExample>
+```json HTTP 400
+{
+  "error": "No se pudo completar por una relación inválida",
+  "statusCode": 400
+}
+```
+</ResponseExample>
+
+### Cannot Delete (Has Dependencies)
+
+<ResponseExample>
+```json HTTP 409
+{
+  "error": "No se puede eliminar la especie porque tiene materiales vegetales relacionados",
+  "statusCode": 409
+}
+```
+</ResponseExample>
+
+### Validation Errors
+
+<ResponseExample>
+```json HTTP 400
+{
+  "error": "Datos inválidos",
+  "statusCode": 400,
+  "details": {
+    "fieldErrors": {
+      "code": ["String must contain at least 1 character(s)"]
+    }
+  }
+}
+```
+</ResponseExample>
+
+## Implementation Reference
+
+Source files:
+- Species: `src/app/api/forest/config/species/route.ts:1`
+- Land Use Types: `src/app/api/forest/config/land-use-types/route.ts:1`
+- Validation schemas: `src/validations/forest-config.schema.ts:1`

@@ -1,0 +1,497 @@
+---
+title: Forest Configuration
+description: Forest patrimony types, classifications, and domain-specific enumerations
+---
+
+## Overview
+
+SMyEG includes comprehensive forest-specific configuration types defined in the Prisma schema. These enumerations standardize forest patrimony hierarchies, biological assets, and measurement protocols.
+
+## Forest Patrimony Hierarchy
+
+### Level 2 Types (PatrimonyLevel2Type)
+
+Top-level forest patrimony units representing properties or reserves:
+
+| Type | Description |
+|------|-------------|
+| `FINCA` | Farm or estate |
+| `PREDIO` | Land parcel or property |
+| `HATO` | Ranch or cattle farm |
+| `FUNDO` | Rural property or estate |
+| `HACIENDA` | Large estate or plantation |
+| `ABRAE` | Protected natural area (Venezuela) |
+
+```prisma
+enum PatrimonyLevel2Type {
+  FINCA
+  PREDIO
+  HATO
+  FUNDO
+  HACIENDA
+  ABRAE
+}
+```
+
+### Level 3 Types (PatrimonyLevel3Type)
+
+Intermediate subdivisions within Level 2 units:
+
+| Type | Description |
+|------|-------------|
+| `COMPARTIMIENTO` | Compartment |
+| `BLOCK` | Block division |
+| `SECCION` | Section |
+| `LOTE` | Lot or batch |
+| `ZONA` | Zone |
+| `BLOQUE` | Block (alternative) |
+| `ZONIFICACION` | Zoning area |
+
+```prisma
+enum PatrimonyLevel3Type {
+  COMPARTIMIENTO
+  BLOCK
+  SECCION
+  LOTE
+  ZONA
+  BLOQUE
+  ZONIFICACION
+}
+```
+
+### Level 4 Types (PatrimonyLevel4Type)
+
+Operational units for forest management:
+
+| Type | Description |
+|------|-------------|
+| `RODAL` | Stand (forest unit) |
+| `PARCELA` | Plot or parcel |
+| `ENUMERATION` | Enumeration unit |
+| `UNIDAD_DE_MANEJO` | Management unit |
+| `CONUCO` | Small agricultural plot |
+| `OTRO_USO` | Other land use |
+
+```prisma
+enum PatrimonyLevel4Type {
+  RODAL
+  PARCELA
+  ENUMERATION
+  UNIDAD_DE_MANEJO
+  CONUCO
+  OTRO_USO
+}
+```
+
+<Info>
+  Level 4 units are the primary operational level for geospatial data, inventory, and asset management.
+</Info>
+
+### Level 5 Types (PatrimonyLevel5Type)
+
+Sampling and measurement units within Level 4:
+
+| Type | Description |
+|------|-------------|
+| `REFERENCIA` | Reference unit |
+| `SUBUNIDAD` | Sub-unit |
+| `SUBPARCELA` | Sub-plot |
+| `MUESTRA` | Sample |
+| `SUBMUESTRA` | Sub-sample |
+
+```prisma
+enum PatrimonyLevel5Type {
+  REFERENCIA
+  SUBUNIDAD
+  SUBPARCELA
+  MUESTRA
+  SUBMUESTRA
+}
+```
+
+## Legal Status
+
+Property legal status for Level 2 units:
+
+| Status | Description |
+|--------|-------------|
+| `ADQUISICION` | Acquisition (ownership) |
+| `ARRIENDO` | Lease or rental |
+| `USUFRUCTO` | Usufruct (right to use) |
+| `COMODATO` | Loan for use |
+| `DECRETO` | Decree (government-assigned) |
+
+```prisma
+enum LegalStatus {
+  ADQUISICION
+  ARRIENDO
+  USUFRUCTO
+  COMODATO
+  DECRETO
+}
+```
+
+## Plot and Geometry Configuration
+
+### Plot Shape Types
+
+Standard shapes for Level 5 sampling plots:
+
+| Shape | Description | Use Case |
+|-------|-------------|----------|
+| `RECTANGULAR` | Rectangular plot | Standard inventory plots |
+| `CUADRADA` | Square plot | Fixed-area sampling |
+| `CIRCULAR` | Circular plot | Variable-radius plots |
+| `HEXAGONAL` | Hexagonal plot | Systematic sampling grids |
+
+```prisma
+enum PlotShapeType {
+  RECTANGULAR
+  CUADRADA
+  CIRCULAR
+  HEXAGONAL
+}
+```
+
+### Dimensions Storage
+
+Level 5 units store 4 dimensions based on shape:
+
+- **Rectangular:** `dimension1M` (length), `dimension2M` (width)
+- **Circular:** `dimension1M` (radius)
+- **Square:** `dimension1M` (side length)
+- **Hexagonal:** `dimension1M` (side length)
+
+## Biological Asset Configuration
+
+### Asset Types
+
+| Type | Description |
+|------|-------------|
+| `COMERCIAL` | Commercial production |
+| `INVESTIGACION` | Research or experimental |
+
+```prisma
+enum BiologicalAssetType {
+  COMERCIAL
+  INVESTIGACION
+}
+```
+
+### IMA Classification
+
+Mean Annual Increment (IMA) quality classes:
+
+| Class | Description | Productivity |
+|-------|-------------|-------------|
+| `I` | Class I | Highest productivity |
+| `II` | Class II | High productivity |
+| `III` | Class III | Medium productivity |
+| `IV` | Class IV | Low productivity |
+| `V` | Class V | Lowest productivity |
+
+```prisma
+enum ImaClassification {
+  I
+  II
+  III
+  IV
+  V
+}
+```
+
+<Info>
+  IMA classes are typically defined with range thresholds (e.g., Class I: >30 m³/ha/year) stored in the `ImaClass` catalog table.
+</Info>
+
+## Vegetal Material Configuration
+
+### Material Types
+
+| Type | Description |
+|------|-------------|
+| `PURA` | Pure genetic material |
+| `HIBRIDA` | Hybrid genetic material |
+
+```prisma
+enum VegetalMaterialType {
+  PURA
+  HIBRIDA
+}
+```
+
+### Plant Types
+
+| Type | Description |
+|------|-------------|
+| `PROGENIE` | Progeny (seed-based) |
+| `CLON` | Clone (vegetative propagation) |
+| `INJERTO` | Graft |
+| `IN_VITRO` | In vitro propagation |
+
+```prisma
+enum PlantType {
+  PROGENIE
+  CLON
+  INJERTO
+  IN_VITRO
+}
+```
+
+### Plant Origin
+
+| Origin | Description |
+|--------|-------------|
+| `NATIVA` | Native species |
+| `EXOTICA` | Exotic (non-native) |
+| `NATURALIZADA` | Naturalized species |
+| `INTRODUCIDA` | Introduced species |
+| `ENDEMICA` | Endemic species |
+| `CULTIVADA` | Cultivated variety |
+
+```prisma
+enum PlantOrigin {
+  NATIVA
+  EXOTICA
+  NATURALIZADA
+  INTRODUCIDA
+  ENDEMICA
+  CULTIVADA
+}
+```
+
+## FSC Certification
+
+Forest Stewardship Council (FSC) certification status for Level 4 units:
+
+| Status | Description |
+|--------|-------------|
+| `SI` | FSC certified |
+| `NO` | Not FSC certified |
+
+```prisma
+enum FscCertificateStatus {
+  SI
+  NO
+}
+```
+
+## Harvest Configuration
+
+### Recommended Harvest Type
+
+| Type | Description |
+|------|-------------|
+| `MECANIZADA` | Mechanized harvest |
+| `MANUAL` | Manual harvest |
+
+```prisma
+enum RecommendedHarvestType {
+  MECANIZADA
+  MANUAL
+}
+```
+
+Stored in `ProductType` catalog to define extraction methods by product dimensions.
+
+## Asset Measurement Domains
+
+### Asset Domains
+
+| Domain | Description | Purpose |
+|--------|-------------|----------|
+| `BIOLOGICO` | Biological | Tree survival, growth, health |
+| `HIDROLOGICO` | Hydrological | Water, weather, climate |
+| `DENDROMETRICO` | Dendrometric | Tree measurements, volume |
+| `DEMOGRAFICO` | Demographic | Community, social data |
+
+```prisma
+enum AssetDomain {
+  BIOLOGICO
+  HIDROLOGICO
+  DENDROMETRICO
+  DEMOGRAFICO
+}
+```
+
+### Measurement Protocols
+
+| Protocol | Domain | Description |
+|----------|--------|-------------|
+| `BIO_SOBREVIVENCIA` | Biological | Survival monitoring |
+| `BIO_PREOPERATIVO` | Biological | Pre-operational inventory |
+| `BIO_PRECOSECHA` | Biological | Pre-harvest inventory |
+| `BIO_CONTINUO` | Biological | Continuous monitoring |
+| `BIO_PARCELAS_PERMANENTES` | Biological | Permanent sample plots |
+| `HIDRO_ESTACION_METEOROLOGICA` | Hydrological | Weather station |
+| `HIDRO_ESTACION_HIDROLOGICA` | Hydrological | Hydrological station |
+| `DENDRO_PARCELA_MULTIPROPOSITO` | Dendrometric | Multi-purpose plots |
+| `DENDRO_PARCELA_CARBONO` | Dendrometric | Carbon plots |
+| `DEMO_ENCUESTA_COMUNIDAD` | Demographic | Community survey |
+| `DEMO_ENCUESTA_NUCLEO_FAMILIAR` | Demographic | Family unit survey |
+
+```prisma
+enum MeasurementProtocolType {
+  BIO_SOBREVIVENCIA
+  BIO_PREOPERATIVO
+  BIO_PRECOSECHA
+  BIO_CONTINUO
+  BIO_PARCELAS_PERMANENTES
+  HIDRO_ESTACION_METEOROLOGICA
+  HIDRO_ESTACION_HIDROLOGICA
+  DENDRO_PARCELA_MULTIPROPOSITO
+  DENDRO_PARCELA_CARBONO
+  DEMO_ENCUESTA_COMUNIDAD
+  DEMO_ENCUESTA_NUCLEO_FAMILIAR
+}
+```
+
+## Community Types
+
+For demographic asset measurement and social data:
+
+| Type | Description |
+|------|-------------|
+| `COMUNA` | Commune |
+| `TERRITORIO_INDIGENA` | Indigenous territory |
+| `COMUNIDAD_CRIOLLA` | Creole community |
+| `PARROQUIA` | Parish |
+
+```prisma
+enum CommunityType {
+  COMUNA
+  TERRITORIO_INDIGENA
+  COMUNIDAD_CRIOLLA
+  PARROQUIA
+}
+```
+
+## Geospatial Job Statuses
+
+### Import Job Status
+
+| Status | Description |
+|--------|-------------|
+| `PENDING` | Waiting to be processed |
+| `EXTRACTING` | Extracting shapefile contents |
+| `VALIDATING` | Validating geometries and attributes |
+| `PROCESSING` | Creating geometry records |
+| `COMPLETED` | Successfully completed |
+| `FAILED` | Processing failed |
+
+```prisma
+enum GeoImportJobStatus {
+  PENDING
+  EXTRACTING
+  VALIDATING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+```
+
+### Recalculation Job Status
+
+| Status | Description |
+|--------|-------------|
+| `PENDING` | Waiting to be processed |
+| `PROCESSING` | Recalculating area |
+| `COMPLETED` | Successfully completed |
+| `FAILED` | Recalculation failed |
+
+```prisma
+enum GeoRecalcJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+```
+
+## Land Patrimonial Variations
+
+### Variation Status
+
+| Status | Description |
+|--------|-------------|
+| `PENDIENTE` | Pending approval/processing |
+| `PROCESADA` | Processed and applied |
+| `ANULADA` | Cancelled/annulled |
+
+```prisma
+enum PatrimonialVariationStatus {
+  PENDIENTE
+  PROCESADA
+  ANULADA
+}
+```
+
+### Variation Kind
+
+| Kind | Description |
+|------|-------------|
+| `INCREMENTO` | Asset value increase |
+| `DECREMENTO` | Asset value decrease |
+| `SIN_CAMBIO` | No patrimonial change |
+
+```prisma
+enum PatrimonialVariationKind {
+  INCREMENTO
+  DECREMENTO
+  SIN_CAMBIO
+}
+```
+
+### Variation Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `SPLIT` | Split land unit into multiple units |
+| `MERGE` | Merge multiple units into one |
+
+```prisma
+enum GeoVariationOperationType {
+  SPLIT
+  MERGE
+}
+```
+
+## Usage Examples
+
+### Creating a Level 2 Unit
+
+```typescript
+const level2 = await prisma.forestPatrimonyLevel2.create({
+  data: {
+    organizationId: 'org-uuid',
+    code: 'FINCA-001',
+    name: 'Finca El Bosque',
+    type: 'FINCA',
+    legalStatus: 'ADQUISICION',
+    totalAreaHa: 1500.50,
+    centroidLatitude: 10.5,
+    centroidLongitude: -67.5,
+  },
+});
+```
+
+### Creating a Measurement Campaign
+
+```typescript
+const campaign = await prisma.assetMeasurementCampaign.create({
+  data: {
+    organizationId: 'org-uuid',
+    level4Id: 'level4-uuid',
+    domain: 'BIOLOGICO',
+    protocolType: 'BIO_SOBREVIVENCIA',
+    campaignCode: 'SURV-2026-03',
+    campaignName: 'Survival Monitoring March 2026',
+    campaignDate: new Date('2026-03-15'),
+    status: 'DRAFT',
+  },
+});
+```
+
+<Check>
+  All forest configuration enums are type-safe and validated by Prisma at compile time and runtime.
+</Check>

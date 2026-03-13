@@ -1,0 +1,288 @@
+---
+title: 'Role Management'
+description: 'API endpoints for managing roles and permissions in the SMyEG system'
+---
+
+## Authentication
+
+All role management endpoints require authentication. Users must have one of the following:
+- `ADMIN` or `SUPER_ADMIN` role
+- Explicit `users:READ`, `users:CREATE`, `users:UPDATE`, or `users:DELETE` permissions for role operations
+
+## List Roles
+
+<RequestExample>
+```bash
+GET /api/roles
+```
+</RequestExample>
+
+Retrieves all active roles and available permissions organized by modules.
+
+### Query Parameters
+
+<ParamField query="organizationId" type="string">
+  Filter roles by organization ID. If not provided, returns roles for the current user's organization plus system roles.
+</ParamField>
+
+### Response
+
+<ResponseField name="roles" type="array">
+  Array of role objects
+  
+  <ResponseField name="id" type="string">
+    Role ID
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Role display name
+  </ResponseField>
+  
+  <ResponseField name="slug" type="string">
+    Role identifier (uppercase, underscores)
+  </ResponseField>
+  
+  <ResponseField name="description" type="string">
+    Role description
+  </ResponseField>
+  
+  <ResponseField name="organizationId" type="string">
+    Organization ID (null for system roles)
+  </ResponseField>
+  
+  <ResponseField name="organizationName" type="string">
+    Organization name (null for system roles)
+  </ResponseField>
+  
+  <ResponseField name="isSystemRole" type="boolean">
+    Whether this is a built-in system role
+  </ResponseField>
+  
+  <ResponseField name="permissions" type="array">
+    Array of permission objects
+    
+    <ResponseField name="permissionId" type="string">
+      Permission ID
+    </ResponseField>
+    
+    <ResponseField name="moduleSlug" type="string">
+      Module identifier
+    </ResponseField>
+    
+    <ResponseField name="action" type="string">
+      Permission action (e.g., READ, CREATE, UPDATE, DELETE)
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="modules" type="array">
+  Array of available modules with their permissions
+  
+  <ResponseField name="id" type="string">
+    Module ID
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Module display name
+  </ResponseField>
+  
+  <ResponseField name="slug" type="string">
+    Module identifier
+  </ResponseField>
+  
+  <ResponseField name="actions" type="array">
+    Available actions for this module
+    
+    <ResponseField name="permissionId" type="string">
+      Permission ID
+    </ResponseField>
+    
+    <ResponseField name="action" type="string">
+      Action name
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+### Notes
+
+- System roles (with `organizationId: null`) are visible to all organizations
+- When the same role slug exists at both system and organization level, organization-specific roles take precedence
+- Non-admin users with `organizations:READ` permission can view roles from other organizations
+
+## Create Role
+
+<RequestExample>
+```bash
+POST /api/roles
+```
+</RequestExample>
+
+Creates a new custom role.
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  Role display name
+</ParamField>
+
+<ParamField body="slug" type="string" required>
+  Role identifier. Will be normalized to uppercase with underscores (only A-Z, 0-9, and underscore allowed)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional role description
+</ParamField>
+
+### Response
+
+Returns the created role object with status code `201`.
+
+### Notes
+
+- The role is associated with the current user's organization
+- Slug is automatically normalized: trimmed, uppercased, spaces converted to underscores, special characters removed
+- Role slug must be unique within the organization
+- An audit log entry is created for the role creation
+- New roles are created with `isSystemRole: false` and `isActive: true`
+
+## Update Role Metadata
+
+<RequestExample>
+```bash
+PATCH /api/roles/{id}
+```
+</RequestExample>
+
+Updates a role's name, slug, or description.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Role ID
+</ParamField>
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  Updated role name
+</ParamField>
+
+<ParamField body="slug" type="string" required>
+  Updated role slug (will be normalized)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Updated role description
+</ParamField>
+
+### Response
+
+Returns the updated role object.
+
+### Notes
+
+- System roles cannot have their slug changed
+- Slug must remain unique within the organization
+- An audit log entry is created for the update
+
+## Update Role Permissions
+
+<RequestExample>
+```bash
+PATCH /api/roles
+```
+</RequestExample>
+
+Updates the permissions assigned to a role.
+
+### Request Body
+
+<ParamField body="roleId" type="string" required>
+  ID of the role to update
+</ParamField>
+
+<ParamField body="permissionIds" type="array" required>
+  Array of permission IDs to assign to the role. Replaces all existing permissions.
+</ParamField>
+
+### Response
+
+<ResponseField name="roleId" type="string">
+  The role ID that was updated
+</ResponseField>
+
+<ResponseField name="permissionIds" type="array">
+  Array of valid permission IDs that were assigned (invalid IDs are filtered out)
+</ResponseField>
+
+### Notes
+
+- This is a full replacement operation - all previous permissions are removed and replaced with the new set
+- Invalid permission IDs are silently filtered out
+- Duplicate permission IDs are automatically deduplicated
+- If an empty array is provided, all permissions are removed from the role
+- The operation is performed in a transaction to ensure consistency
+
+## Delete Role
+
+<RequestExample>
+```bash
+DELETE /api/roles/{id}
+```
+</RequestExample>
+
+Performs a soft delete on a custom role.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Role ID
+</ParamField>
+
+### Response
+
+Returns a success object with the role ID and deletion confirmation.
+
+<ResponseField name="id" type="string">
+  ID of the deleted role
+</ResponseField>
+
+<ResponseField name="deleted" type="boolean">
+  Confirmation that the role was deleted
+</ResponseField>
+
+### Notes
+
+- System roles cannot be deleted
+- This is a soft delete - the role is marked as inactive rather than permanently removed
+- All user assignments to this role are also marked as inactive
+- The operation is performed in a transaction to ensure consistency
+- An audit log entry is created for the deletion
+
+## Import Roles
+
+<RequestExample>
+```bash
+POST /api/roles/import
+```
+</RequestExample>
+
+Bulk imports roles from a file (CSV or XLSX).
+
+<Info>
+This endpoint follows similar patterns to the users import endpoint. Check the source code at `/src/app/api/roles/import/route.ts` for detailed implementation.
+</Info>
+
+## Export Roles
+
+<RequestExample>
+```bash
+GET /api/roles/export
+```
+</RequestExample>
+
+Exports roles and their permissions to a file format.
+
+<Info>
+This endpoint follows similar patterns to the users export endpoint. Check the source code at `/src/app/api/roles/export/route.ts` for detailed implementation.
+</Info>

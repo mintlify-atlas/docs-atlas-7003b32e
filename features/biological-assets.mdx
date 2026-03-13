@@ -1,0 +1,566 @@
+---
+title: 'Biological Assets Management'
+description: 'Forest biological asset tracking with measurement campaigns and observation protocols'
+---
+
+## Overview
+
+The Biological Assets system tracks forest plantations and natural stands (Level 6 in the hierarchy) with comprehensive measurement campaigns, observation protocols, and calculation engines. This enables monitoring of growth, survival, volume, and other key forest metrics.
+
+## Biological Asset Model (Level 6)
+
+### Schema Definition
+
+```prisma
+model ForestBiologicalAssetLevel6 {
+  id                            String                @id @default(uuid())
+  level4Id                      String
+  biologicalAssetKey            String                @unique
+  accountingKey                 String?
+  
+  // Establishment Information
+  establishmentDate             DateTime?
+  plantingYear                  Int?
+  geneticMaterialCode           String?
+  geneticMaterialName           String?
+  assetType                     BiologicalAssetType   @default(COMERCIAL)
+  
+  // Management Information
+  managementSchemeCode          String?
+  managementSchemeName          String?
+  inventoryCode                 String?
+  inventoryType                 String?
+  inventoryDate                 DateTime?
+  inventoryAgeYears             Int?
+  
+  // Spatial Configuration
+  level5UnitCount               Int?
+  spacingCode                   String?
+  spacingDescription            String?
+  spacingBetweenRowsM           Decimal?              @db.Decimal(12, 4)
+  spacingBetweenTreesM          Decimal?              @db.Decimal(12, 4)
+  treeDensityPerHa              Decimal?              @db.Decimal(12, 0)
+  
+  // Biometric Data
+  survivalRate                  Decimal?              @db.Decimal(5, 2)
+  dominantHeightM               Decimal?              @db.Decimal(12, 4)
+  meanHeightM                   Decimal?              @db.Decimal(12, 4)
+  quadraticDiameterM            Decimal?              @db.Decimal(12, 4)
+  basalAreaM2                   Decimal?              @db.Decimal(12, 4)
+  
+  // Volume Data
+  unitVolumeM3NoBarkPerHa       Decimal?              @db.Decimal(12, 4)
+  unitVolumeM3WithBarkPerHa     Decimal?              @db.Decimal(12, 4)
+  totalVolumeM3NoBark           Decimal?              @db.Decimal(12, 4)
+  totalVolumeM3WithBark         Decimal?              @db.Decimal(12, 4)
+  adjustedVolumeM3NoBarkPerHa   Decimal?              @db.Decimal(12, 4)
+  adjustedVolumeM3WithBarkPerHa Decimal?              @db.Decimal(12, 4)
+  
+  // Growth Classification
+  imaClassCode                  String?
+  imaClassName                  String?
+  
+  // Financial
+  actualCostUsd                 Decimal?              @db.Decimal(18, 2)
+  
+  isActive                      Boolean               @default(true)
+  level4                        ForestPatrimonyLevel4 @relation(fields: [level4Id], references: [id])
+}
+
+enum BiologicalAssetType {
+  COMERCIAL
+  INVESTIGACION
+}
+```
+
+### Asset Types
+
+<CardGroup cols={2}>
+  <Card title="Commercial Assets" icon="dollar-sign">
+    **COMERCIAL**
+    
+    Production plantations intended for timber harvest and commercial use. Tracked for accounting and revenue planning.
+  </Card>
+  
+  <Card title="Research Assets" icon="flask">
+    **INVESTIGACION**
+    
+    Experimental plantations for genetic trials, silvicultural research, and testing. May have different management and measurement protocols.
+  </Card>
+</CardGroup>
+
+## Measurement Campaigns
+
+### Campaign Model
+
+```prisma
+model AssetMeasurementCampaign {
+  id                String                  @id @default(uuid())
+  organizationId    String
+  level4Id          String
+  domain            AssetDomain
+  protocolType      MeasurementProtocolType
+  campaignCode      String
+  campaignName      String
+  campaignDate      DateTime
+  schemaVersion     String                  @default("1.0")
+  status            AssetCampaignStatus     @default(DRAFT)
+  notes             String?
+  metadata          Json?
+  createdById       String?
+  
+  organization      Organization            @relation(fields: [organizationId], references: [id])
+  level4            ForestPatrimonyLevel4   @relation(fields: [level4Id], references: [id])
+  observations      AssetMeasurementObservation[]
+  results           AssetResultSnapshot[]
+  calculationJobs   AssetCalculationJob[]
+  
+  @@unique([organizationId, campaignCode])
+}
+
+enum AssetCampaignStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+```
+
+### Asset Domains
+
+Campaigns are organized by domain:
+
+```prisma
+enum AssetDomain {
+  BIOLOGICO      // Forest growth and survival
+  HIDROLOGICO    // Water and climate monitoring
+  DENDROMETRICO  // Tree measurements and volume
+  DEMOGRAFICO    // Community and social data
+}
+```
+
+### Measurement Protocols
+
+Each campaign follows a specific measurement protocol:
+
+```prisma
+enum MeasurementProtocolType {
+  // Biological Domain
+  BIO_SOBREVIVENCIA              // Survival assessment
+  BIO_PREOPERATIVO               // Pre-operational inventory
+  BIO_PRECOSECHA                 // Pre-harvest inventory
+  BIO_CONTINUO                   // Continuous monitoring
+  BIO_PARCELAS_PERMANENTES       // Permanent sample plots
+  
+  // Hydrological Domain
+  HIDRO_ESTACION_METEOROLOGICA   // Weather stations
+  HIDRO_ESTACION_HIDROLOGICA     // Hydrological stations
+  
+  // Dendrometric Domain
+  DENDRO_PARCELA_MULTIPROPOSITO  // Multi-purpose plots
+  DENDRO_PARCELA_CARBONO         // Carbon measurement plots
+  
+  // Demographic Domain
+  DEMO_ENCUESTA_COMUNIDAD        // Community surveys
+  DEMO_ENCUESTA_NUCLEO_FAMILIAR  // Family unit surveys
+}
+```
+
+## Measurement Observations
+
+### Observation Model
+
+```prisma
+model AssetMeasurementObservation {
+  id                String                  @id @default(uuid())
+  campaignId        String
+  level5UnitCode    String?                 // Reference to Level 5 plot
+  sectionKey        String?                 // Custom section identifier
+  observedAt        DateTime?
+  payload           Json                    // Flexible schema for protocol data
+  
+  campaign          AssetMeasurementCampaign @relation(fields: [campaignId], references: [id])
+  
+  @@index([campaignId, observedAt])
+  @@index([campaignId, level5UnitCode])
+}
+```
+
+### Flexible Payload Schema
+
+Observations use JSON payloads to accommodate different protocols:
+
+```typescript
+// Example: Survival Protocol Observation
+{
+  "plotCode": "P-001",
+  "survivalTarget": 1000,
+  "survivalReal": 850,
+  "survivalPct": 85.0,
+  "replantAction": "REPLANTE_PARCIAL",
+  "notes": "Some mortality in low areas"
+}
+
+// Example: Dendrometric Observation
+{
+  "treeNumber": 123,
+  "dbh": 15.4,        // Diameter at breast height (cm)
+  "height": 12.3,     // Total height (m)
+  "quality": "A",     // Stem quality class
+  "status": "ALIVE"
+}
+```
+
+<Info>
+  The flexible JSON schema allows adding new measurement protocols without schema migrations.
+</Info>
+
+## Calculation Jobs
+
+### Background Processing
+
+Measurement data is processed asynchronously:
+
+```prisma
+model AssetCalculationJob {
+  id                String                  @id @default(uuid())
+  organizationId    String
+  campaignId        String
+  domain            AssetDomain
+  protocolType      MeasurementProtocolType
+  status            AssetCalculationStatus  @default(PENDING)
+  attempts          Int                     @default(0)
+  runAfter          DateTime                @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  errorMessage      String?
+  payload           Json?
+  createdById       String?
+  
+  organization      Organization            @relation(fields: [organizationId], references: [id])
+  campaign          AssetMeasurementCampaign @relation(fields: [campaignId], references: [id])
+  
+  @@index([status, runAfter])
+}
+
+enum AssetCalculationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+```
+
+### Worker Implementation
+
+The asset measurement worker (`src/workers/asset-measurement-worker-scheduler.ts`) processes calculation jobs:
+
+```typescript
+const intervalMs = Number.parseInt(
+  process.env.ASSET_MEASUREMENT_WORKER_INTERVAL_MS ?? "4000", 
+  10
+);
+const batchSize = Number.parseInt(
+  process.env.ASSET_MEASUREMENT_WORKER_BATCH_SIZE ?? "20", 
+  10
+);
+
+async function runBatch() {
+  let processed = 0;
+
+  for (let i = 0; i < batchSize; i += 1) {
+    const result = await processNextAssetCalculationJob();
+    if (!result.processed) {
+      break;
+    }
+    processed += 1;
+  }
+
+  if (processed > 0) {
+    console.info(`[asset-worker] processed calculation_jobs=${processed}`);
+  }
+}
+```
+
+### Calculation Logic Example
+
+From `src/lib/asset-measurement-worker.ts`:
+
+```typescript
+function calculateSummary(observations: WorkerObservation[]) {
+  const bySection = new Map<string, number>();
+  const byLevel5 = new Map<string, number>();
+
+  for (const obs of observations) {
+    const section = obs.sectionKey?.trim() || "SIN_SECCION";
+    const level5 = obs.level5UnitCode?.trim() || "SIN_N5";
+
+    bySection.set(section, (bySection.get(section) ?? 0) + 1);
+    byLevel5.set(level5, (byLevel5.get(level5) ?? 0) + 1);
+  }
+
+  return {
+    observationCount: observations.length,
+    sectionCount: bySection.size,
+    level5UnitCount: byLevel5.size,
+    observationsBySection: Object.fromEntries(bySection.entries()),
+    observationsByLevel5Unit: Object.fromEntries(byLevel5.entries())
+  };
+}
+```
+
+### Survival Rate Classification
+
+```typescript
+function classifyReplantAction(survivalRealPct: number | null) {
+  if (survivalRealPct === null) return "SIN_DATOS";
+  if (survivalRealPct < 75) return "REPLANTE_TOTAL";
+  if (survivalRealPct <= 90) return "REPLANTE_PARCIAL";
+  return "SIN_REPLANTE";
+}
+```
+
+## Result Snapshots
+
+Calculated results are stored as versioned snapshots:
+
+```prisma
+model AssetResultSnapshot {
+  id                String                  @id @default(uuid())
+  campaignId        String
+  level4Id          String
+  domain            AssetDomain
+  resultKey         String
+  resultVersion     Int                     @default(1)
+  schemaVersion     String                  @default("1.0")
+  resultPayload     Json
+  isCurrent         Boolean                 @default(true)
+  calculatedAt      DateTime                @default(now())
+  
+  campaign          AssetMeasurementCampaign @relation(fields: [campaignId], references: [id])
+  level4            ForestPatrimonyLevel4   @relation(fields: [level4Id], references: [id])
+  
+  @@unique([campaignId, resultKey, resultVersion])
+  @@index([level4Id, domain, isCurrent, calculatedAt])
+}
+```
+
+### Result Versioning
+
+Results can be recalculated, creating new versions:
+
+```typescript
+// Mark previous results as non-current
+await prisma.assetResultSnapshot.updateMany({
+  where: {
+    campaignId,
+    resultKey: "survival_summary",
+    isCurrent: true
+  },
+  data: { isCurrent: false }
+});
+
+// Insert new result version
+await prisma.assetResultSnapshot.create({
+  data: {
+    campaignId,
+    level4Id,
+    domain: "BIOLOGICO",
+    resultKey: "survival_summary",
+    resultVersion: nextVersion,
+    resultPayload: calculatedData,
+    isCurrent: true,
+    calculatedAt: new Date()
+  }
+});
+```
+
+## Campaign Workflow
+
+<Steps>
+  <Step title="Create Campaign">
+    Create a new measurement campaign with `DRAFT` status:
+    
+    ```typescript
+    const campaign = await prisma.assetMeasurementCampaign.create({
+      data: {
+        organizationId,
+        level4Id,
+        domain: "BIOLOGICO",
+        protocolType: "BIO_SOBREVIVENCIA",
+        campaignCode: "SURV-2024-Q1",
+        campaignName: "Q1 2024 Survival Assessment",
+        campaignDate: new Date("2024-03-15"),
+        status: "DRAFT"
+      }
+    });
+    ```
+  </Step>
+  
+  <Step title="Collect Observations">
+    Field teams record observations:
+    
+    ```typescript
+    await prisma.assetMeasurementObservation.createMany({
+      data: observations.map(obs => ({
+        campaignId: campaign.id,
+        level5UnitCode: obs.plotCode,
+        observedAt: obs.measurementDate,
+        payload: obs.data
+      }))
+    });
+    ```
+  </Step>
+  
+  <Step title="Activate Campaign">
+    Mark campaign as `ACTIVE` when ready for processing:
+    
+    ```typescript
+    await prisma.assetMeasurementCampaign.update({
+      where: { id: campaign.id },
+      data: { status: "ACTIVE" }
+    });
+    ```
+  </Step>
+  
+  <Step title="Queue Calculation">
+    Create a calculation job:
+    
+    ```typescript
+    await enqueueAssetCalculationJob({
+      organizationId,
+      campaignId: campaign.id,
+      domain: "BIOLOGICO",
+      protocolType: "BIO_SOBREVIVENCIA",
+      createdById: session.user.id
+    });
+    ```
+  </Step>
+  
+  <Step title="Background Processing">
+    Worker picks up the job, processes observations, and generates results.
+  </Step>
+  
+  <Step title="Review Results">
+    Query the latest results:
+    
+    ```typescript
+    const results = await prisma.assetResultSnapshot.findMany({
+      where: {
+        campaignId: campaign.id,
+        isCurrent: true
+      },
+      orderBy: { calculatedAt: 'desc' }
+    });
+    ```
+  </Step>
+  
+  <Step title="Close Campaign">
+    Mark campaign as `CLOSED` when complete:
+    
+    ```typescript
+    await prisma.assetMeasurementCampaign.update({
+      where: { id: campaign.id },
+      data: { status: "CLOSED" }
+    });
+    ```
+  </Step>
+</Steps>
+
+## IMA Classification
+
+Mean Annual Increment (IMA) classes categorize forest productivity:
+
+```prisma
+model ImaClass {
+  id             String            @id @default(uuid())
+  organizationId String?
+  code           String
+  classification ImaClassification
+  name           String
+  description    String?
+  rangeMin       Decimal?          @db.Decimal(12, 4)
+  rangeMax       Decimal?          @db.Decimal(12, 4)
+  
+  @@unique([organizationId, code])
+}
+
+enum ImaClassification {
+  I
+  II
+  III
+  IV
+  V
+}
+```
+
+### Classification Example
+
+| Class | Name | Range (m³/ha/year) | Description |
+|-------|------|-----------------------|-------------|
+| I | Excelente | > 40 | Excellent growth |
+| II | Muy Bueno | 30 - 40 | Very good growth |
+| III | Bueno | 20 - 30 | Good growth |
+| IV | Regular | 10 - 20 | Fair growth |
+| V | Bajo | < 10 | Poor growth |
+
+## Worker Configuration
+
+```bash
+# Asset measurement worker settings
+ASSET_MEASUREMENT_WORKER_INTERVAL_MS=4000
+ASSET_MEASUREMENT_WORKER_BATCH_SIZE=20
+ASSET_MEASUREMENT_WORKER_RUN_ONCE=false
+```
+
+### Running the Worker
+
+```bash
+# Development
+npm run worker:asset
+
+# Production
+docker-compose up -d asset-worker
+
+# One-time processing
+ASSET_MEASUREMENT_WORKER_RUN_ONCE=true npm run worker:asset
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Protocol Consistency">
+    Use the same protocol type throughout a campaign. Don't mix observation schemas within a single campaign.
+  </Accordion>
+  
+  <Accordion title="Data Validation">
+    Validate observation payloads before insertion:
+    
+    ```typescript
+    function validateSurvivalObservation(payload: unknown) {
+      // Check required fields
+      // Validate ranges (e.g., survival 0-100%)
+      // Verify plot codes exist
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Versioning">
+    Always keep previous result versions for audit trails. The `isCurrent` flag makes it easy to query latest results while preserving history.
+  </Accordion>
+  
+  <Accordion title="Error Handling">
+    Calculation jobs should be idempotent and include retry logic with exponential backoff for transient failures.
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Forest Patrimony" icon="tree" href="/features/forest-patrimony">
+    Understand the hierarchy that assets belong to
+  </Card>
+  <Card title="Background Workers" icon="gears" href="/guides/workers">
+    Learn about the worker architecture
+  </Card>
+</CardGroup>

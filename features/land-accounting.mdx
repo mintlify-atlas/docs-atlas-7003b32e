@@ -1,0 +1,589 @@
+---
+title: 'Land Accounting & Variations'
+description: 'Land use tracking, patrimonial variations, and value analytics'
+---
+
+## Overview
+
+The Land Accounting system tracks changes in land use over time and calculates their impact on forest patrimony value. This enables financial reporting, regulatory compliance, and strategic planning based on land use transitions.
+
+## Patrimonial Variations
+
+Land use changes are tracked as patrimonial variations:
+
+```prisma
+model LandPatrimonialVariation {
+  id                      String                     @id @default(uuid())
+  organizationId          String
+  level4Id                String
+  
+  // Land Use Change
+  previousLandUseName     String?
+  newLandUseName          String
+  affectedAreaHa          Decimal                    @db.Decimal(12, 4)
+  variationDate           DateTime
+  
+  // Financial Impact
+  referenceValueBeforeUsd Decimal                    @default(0) @db.Decimal(18, 2)
+  referenceValueAfterUsd  Decimal                    @default(0) @db.Decimal(18, 2)
+  totalValueBeforeUsd     Decimal                    @default(0) @db.Decimal(18, 2)
+  totalValueAfterUsd      Decimal                    @default(0) @db.Decimal(18, 2)
+  patrimonialDeltaUsd     Decimal                    @default(0) @db.Decimal(18, 2)
+  
+  // Classification
+  kind                    PatrimonialVariationKind
+  status                  PatrimonialVariationStatus @default(PENDIENTE)
+  
+  notes                   String?
+  processedAt             DateTime?
+  createdById             String
+  processedById           String?
+  
+  organization            Organization               @relation(fields: [organizationId], references: [id])
+  level4                  ForestPatrimonyLevel4      @relation(fields: [level4Id], references: [id])
+  createdBy               User                       @relation("LandVariationCreatedBy", fields: [createdById], references: [id])
+  processedBy             User?                      @relation("LandVariationProcessedBy", fields: [processedById], references: [id])
+  
+  @@index([organizationId, status])
+  @@index([level4Id, variationDate])
+}
+```
+
+## Variation Types
+
+### Variation Kind
+
+Variations are classified by their impact on patrimony value:
+
+```prisma
+enum PatrimonialVariationKind {
+  INCREMENTO   // Increase in value
+  DECREMENTO   // Decrease in value
+  SIN_CAMBIO   // No value change
+}
+```
+
+<CardGroup cols={3}>
+  <Card title="Incremento" icon="arrow-up" color="#16a34a">
+    Land use change that increases value (e.g., bare land → plantation)
+  </Card>
+  <Card title="Decremento" icon="arrow-down" color="#dc2626">
+    Land use change that decreases value (e.g., plantation → harvested)
+  </Card>
+  <Card title="Sin Cambio" icon="minus" color="#6b7280">
+    Land use change with neutral value impact
+  </Card>
+</CardGroup>
+
+### Variation Status
+
+```prisma
+enum PatrimonialVariationStatus {
+  PENDIENTE   // Pending approval
+  PROCESADA   // Processed and applied
+  ANULADA     // Cancelled/voided
+}
+```
+
+## Land Use Types
+
+Land uses are defined in a flexible catalog:
+
+```prisma
+model LandUseType {
+  id             String        @id @default(uuid())
+  organizationId String?
+  continentId    String?       // Optional geographic context
+  code           String
+  name           String
+  category       String
+  surfaceHa      Decimal       @default(0) @db.Decimal(14, 4)
+  isProductive   Boolean       @default(false)
+  isActive       Boolean       @default(true)
+  
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  continent      Continent?    @relation(fields: [continentId], references: [id])
+  
+  @@unique([organizationId, code])
+}
+```
+
+### Common Land Use Categories
+
+<Accordion title="Forest Plantation">
+  **Category**: Productive
+  
+  Examples:
+  - Pine plantation
+  - Eucalyptus plantation
+  - Teak plantation
+  - Mixed species plantation
+  
+  Characteristics:
+  - `isProductive = true`
+  - Generates commercial timber
+  - Tracked for volume and growth
+</Accordion>
+
+<Accordion title="Natural Forest">
+  **Category**: Conservation/Production
+  
+  Examples:
+  - Primary forest
+  - Secondary forest
+  - Reserved forest
+  - Protected area
+  
+  Characteristics:
+  - May be productive (sustainable harvest)
+  - High conservation value
+  - Limited intervention
+</Accordion>
+
+<Accordion title="Non-Forest">
+  **Category**: Other Uses
+  
+  Examples:
+  - Agriculture
+  - Pasture
+  - Infrastructure
+  - Water bodies
+  - Bare land
+  
+  Characteristics:
+  - `isProductive = false` (from forest perspective)
+  - May convert to plantation
+</Accordion>
+
+## Creating Variations
+
+### Manual Entry
+
+Direct creation of land use change records:
+
+```typescript
+const variation = await prisma.landPatrimonialVariation.create({
+  data: {
+    organizationId: session.user.organizationId,
+    level4Id: "uuid-of-level4-unit",
+    previousLandUseName: "Bare Land",
+    newLandUseName: "Pine Plantation",
+    affectedAreaHa: new Decimal("25.5"),
+    variationDate: new Date("2024-03-15"),
+    kind: "INCREMENTO",
+    status: "PENDIENTE",
+    notes: "Initial plantation establishment",
+    createdById: session.user.id,
+    
+    // Financial values calculated separately
+    referenceValueBeforeUsd: new Decimal("1000"),
+    referenceValueAfterUsd: new Decimal("5000"),
+    totalValueBeforeUsd: new Decimal("25500"),
+    totalValueAfterUsd: new Decimal("127500"),
+    patrimonialDeltaUsd: new Decimal("102000")
+  }
+});
+```
+
+### Geometric Variations
+
+Variations can be triggered by geometry changes (splits/merges):
+
+```prisma
+model GeoLandVariationJob {
+  id             String                    @id @default(uuid())
+  organizationId String
+  status         GeoVariationJobStatus     @default(PENDING)
+  operationType  GeoVariationOperationType
+  variationDate  DateTime
+  notes          String?
+  payload        Json
+  attempts       Int                       @default(0)
+  runAfter       DateTime                  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  lastError      String?
+  createdById    String?
+  
+  organization   Organization              @relation(fields: [organizationId], references: [id])
+  createdBy      User?                     @relation("GeoVariationJobCreatedBy", fields: [createdById], references: [id])
+  
+  @@index([status, runAfter])
+}
+
+enum GeoVariationOperationType {
+  SPLIT   // One unit divided into multiple
+  MERGE   // Multiple units combined into one
+}
+```
+
+### Split Operation Example
+
+```typescript
+// Original Level 4 unit split into two
+const splitJob = await prisma.geoLandVariationJob.create({
+  data: {
+    organizationId,
+    operationType: "SPLIT",
+    variationDate: new Date(),
+    notes: "Dividing RODAL-01 into RODAL-01A and RODAL-01B",
+    payload: {
+      sourceLevel4Id: "original-uuid",
+      targetLevel4Ids: ["new-uuid-a", "new-uuid-b"],
+      areaDistribution: {
+        "new-uuid-a": 30.5,
+        "new-uuid-b": 24.5
+      },
+      landUseAssignments: {
+        "new-uuid-a": "Pine Plantation",
+        "new-uuid-b": "Eucalyptus Plantation"
+      }
+    },
+    status: "PENDING",
+    createdById: session.user.id
+  }
+});
+```
+
+## Value Calculation
+
+Patrimonial values are calculated based on land use and area:
+
+### Reference Values
+
+Reference values represent per-hectare valuations:
+
+```typescript
+function calculateReferenceValue(
+  landUseName: string,
+  ageYears?: number,
+  productivityClass?: string
+): Decimal {
+  // Lookup valuation tables
+  // Consider:
+  // - Land use type
+  // - Plantation age
+  // - Site productivity
+  // - Market conditions
+  
+  return new Decimal(valuationPerHa);
+}
+```
+
+### Total Values
+
+Total values are reference values multiplied by affected area:
+
+```typescript
+const totalValueBeforeUsd = referenceValueBeforeUsd.times(affectedAreaHa);
+const totalValueAfterUsd = referenceValueAfterUsd.times(affectedAreaHa);
+const patrimonialDeltaUsd = totalValueAfterUsd.minus(totalValueBeforeUsd);
+```
+
+### Delta Calculation
+
+The patrimonial delta represents net value change:
+
+- **Positive delta**: Increase in patrimony value (INCREMENTO)
+- **Negative delta**: Decrease in patrimony value (DECREMENTO)
+- **Zero delta**: No value change (SIN_CAMBIO)
+
+```typescript
+function determineVariationKind(delta: Decimal): PatrimonialVariationKind {
+  if (delta.greaterThan(0)) return "INCREMENTO";
+  if (delta.lessThan(0)) return "DECREMENTO";
+  return "SIN_CAMBIO";
+}
+```
+
+## Variation Workflow
+
+<Steps>
+  <Step title="Detect Land Use Change">
+    Identify when a Level 4 unit's land use changes:
+    
+    - Manual update by user
+    - Shapefile import with land use data
+    - Scheduled plantation/harvest events
+  </Step>
+  
+  <Step title="Create Variation Record">
+    Create a `LandPatrimonialVariation` with status `PENDIENTE`:
+    
+    ```typescript
+    await prisma.landPatrimonialVariation.create({
+      data: {
+        organizationId,
+        level4Id,
+        previousLandUseName: oldLandUse,
+        newLandUseName: newLandUse,
+        affectedAreaHa: unitArea,
+        variationDate: changeDate,
+        kind: determineKind(delta),
+        status: "PENDIENTE",
+        createdById: userId
+      }
+    });
+    ```
+  </Step>
+  
+  <Step title="Calculate Financial Impact">
+    Compute reference values, total values, and delta:
+    
+    - Query valuation tables
+    - Apply age/productivity adjustments
+    - Calculate totals and delta
+  </Step>
+  
+  <Step title="Review and Approve">
+    Authorized user reviews the variation:
+    
+    - Verify land use assignment
+    - Validate financial calculations
+    - Approve or reject
+  </Step>
+  
+  <Step title="Process Variation">
+    Mark as `PROCESADA` and update Level 4 unit:
+    
+    ```typescript
+    await prisma.$transaction([
+      prisma.landPatrimonialVariation.update({
+        where: { id: variationId },
+        data: {
+          status: "PROCESADA",
+          processedAt: new Date(),
+          processedById: session.user.id
+        }
+      }),
+      prisma.forestPatrimonyLevel4.update({
+        where: { id: level4Id },
+        data: {
+          previousLandUseName: variation.currentLandUseName,
+          currentLandUseName: variation.newLandUseName,
+          landUseChangeDate: variation.variationDate
+        }
+      })
+    ]);
+    ```
+  </Step>
+  
+  <Step title="Update Analytics">
+    Aggregate variation data for reporting:
+    
+    - Total area by land use
+    - Value changes over time
+    - Productivity trends
+  </Step>
+</Steps>
+
+## Analytics and Reporting
+
+### Land Use Distribution
+
+Query current land use distribution:
+
+```typescript
+const distribution = await prisma.forestPatrimonyLevel4.groupBy({
+  by: ['currentLandUseName'],
+  where: {
+    organizationId,
+    isActive: true
+  },
+  _sum: {
+    totalAreaHa: true
+  },
+  _count: {
+    id: true
+  }
+});
+
+// Result:
+// [
+//   { currentLandUseName: "Pine Plantation", _sum: { totalAreaHa: 1250.5 }, _count: { id: 35 } },
+//   { currentLandUseName: "Eucalyptus Plantation", _sum: { totalAreaHa: 890.2 }, _count: { id: 22 } },
+//   ...
+// ]
+```
+
+### Variation Timeline
+
+Track changes over time:
+
+```typescript
+const timeline = await prisma.landPatrimonialVariation.findMany({
+  where: {
+    organizationId,
+    status: "PROCESADA",
+    variationDate: {
+      gte: startDate,
+      lte: endDate
+    }
+  },
+  orderBy: {
+    variationDate: 'asc'
+  },
+  select: {
+    variationDate: true,
+    kind: true,
+    affectedAreaHa: true,
+    patrimonialDeltaUsd: true,
+    newLandUseName: true
+  }
+});
+```
+
+### Value Impact Summary
+
+Aggregate financial impact:
+
+```typescript
+const impact = await prisma.landPatrimonialVariation.aggregate({
+  where: {
+    organizationId,
+    status: "PROCESADA",
+    variationDate: {
+      gte: fiscalYearStart,
+      lte: fiscalYearEnd
+    }
+  },
+  _sum: {
+    patrimonialDeltaUsd: true,
+    affectedAreaHa: true
+  },
+  _count: {
+    id: true
+  }
+});
+
+console.log(`Total value change: $${impact._sum.patrimonialDeltaUsd}`);
+console.log(`Total area affected: ${impact._sum.affectedAreaHa} ha`);
+console.log(`Number of variations: ${impact._count.id}`);
+```
+
+## Geospatial Variation Jobs
+
+The geo-worker processes geometric variations:
+
+```typescript
+// From src/workers/geo-worker-scheduler.ts
+const variationBatchSize = Number.parseInt(
+  process.env.GEO_VARIATION_BATCH_SIZE ?? "15", 
+  10
+);
+
+for (let i = 0; i < variationBatchSize; i += 1) {
+  const result = await processNextGeoVariationJob();
+  if (!result.processed) {
+    break;
+  }
+  variationProcessed += 1;
+}
+```
+
+### Split Processing
+
+When a unit is split:
+
+1. Create new Level 4 units for each split segment
+2. Assign geometry from shapefile
+3. Calculate areas for each new unit
+4. Create `LandPatrimonialVariation` for each with land use assignments
+5. Mark original unit as inactive
+
+### Merge Processing
+
+When units are merged:
+
+1. Create new Level 4 unit for merged area
+2. Combine geometries
+3. Calculate total area
+4. Determine predominant land use or assign new
+5. Create variation record for transition
+6. Mark source units as inactive
+
+## Worker Configuration
+
+```bash
+# Geo variation worker settings
+GEO_WORKER_INTERVAL_MS=4000
+GEO_VARIATION_BATCH_SIZE=15
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Audit Trail">
+    Always maintain complete variation history. Never delete variation records; use `ANULADA` status for cancelled variations.
+  </Accordion>
+  
+  <Accordion title="Approval Workflow">
+    Implement approval workflows for significant value changes:
+    
+    - Require supervisor approval for variations > $50,000
+    - Dual approval for land use category changes
+    - Audit log all approvals
+  </Accordion>
+  
+  <Accordion title="Valuation Updates">
+    Periodically recalculate variations when valuation tables are updated:
+    
+    ```typescript
+    // Recalculate pending variations with new valuation
+    const pending = await prisma.landPatrimonialVariation.findMany({
+      where: { status: "PENDIENTE" }
+    });
+    
+    for (const variation of pending) {
+      const newValues = calculateValues(
+        variation.newLandUseName,
+        variation.affectedAreaHa
+      );
+      
+      await prisma.landPatrimonialVariation.update({
+        where: { id: variation.id },
+        data: newValues
+      });
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Data Consistency">
+    Ensure Level 4 unit's `currentLandUseName` matches the latest processed variation:
+    
+    ```typescript
+    // Verify consistency
+    const latestVariation = await prisma.landPatrimonialVariation.findFirst({
+      where: {
+        level4Id,
+        status: "PROCESADA"
+      },
+      orderBy: {
+        variationDate: 'desc'
+      }
+    });
+    
+    const level4 = await prisma.forestPatrimonyLevel4.findUnique({
+      where: { id: level4Id }
+    });
+    
+    if (latestVariation && level4.currentLandUseName !== latestVariation.newLandUseName) {
+      console.warn("Data inconsistency detected");
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Forest Patrimony" icon="tree" href="/features/forest-patrimony">
+    Learn about the Level 4 units that variations affect
+  </Card>
+  <Card title="Geospatial Import" icon="map" href="/features/geospatial-import">
+    Understand how geometry changes trigger variations
+  </Card>
+  <Card title="Background Workers" icon="gears" href="/guides/workers">
+    Learn about the worker processing variations
+  </Card>
+</CardGroup>

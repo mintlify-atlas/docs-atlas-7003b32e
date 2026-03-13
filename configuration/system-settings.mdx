@@ -1,0 +1,512 @@
+---
+title: System Settings
+description: Application configuration, system-wide settings, and configuration types
+---
+
+## Overview
+
+SMyEG provides a flexible system configuration framework through the `SystemConfiguration` model. Settings can be scoped globally or per-organization and support multiple data types with validation.
+
+## Configuration Model
+
+```prisma
+model SystemConfiguration {
+  id              String        @id @default(uuid()) @db.Uuid
+  organizationId  String?       @db.Uuid
+  category        String        @db.VarChar(100)
+  key             String        @db.VarChar(150)
+  value           String?
+  configType      ConfigType    @default(STRING)
+  description     String?
+  isPublic        Boolean       @default(false)
+  isEditable      Boolean       @default(true)
+  validationRules Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  updatedBy       String?       @db.Uuid
+  organization    Organization? @relation(...)
+
+  @@unique([organizationId, category, key])
+}
+```
+
+## Configuration Types
+
+The `ConfigType` enum defines how configuration values are stored and interpreted:
+
+| Type | Description | Storage Format | Example Use Case |
+|------|-------------|----------------|------------------|
+| `STRING` | Text values | Plain string | Application name, URLs |
+| `INTEGER` | Whole numbers | Numeric string | Max upload size, timeouts |
+| `BOOLEAN` | True/false flags | `"true"` or `"false"` | Feature toggles |
+| `JSON` | Structured data | JSON string | Complex settings, arrays |
+| `SECRET` | Sensitive data | Encrypted string | API keys, passwords |
+
+```prisma
+enum ConfigType {
+  STRING
+  INTEGER
+  BOOLEAN
+  JSON
+  SECRET
+}
+```
+
+## Configuration Scope
+
+### Global Configuration
+
+Settings with `organizationId = null` apply system-wide:
+
+```typescript
+const globalConfig = await prisma.systemConfiguration.create({
+  data: {
+    organizationId: null,
+    category: 'system',
+    key: 'max_upload_size_mb',
+    value: '100',
+    configType: 'INTEGER',
+    description: 'Maximum file upload size in megabytes',
+    isPublic: true,
+    isEditable: true,
+  },
+});
+```
+
+### Organization-Specific Configuration
+
+Settings scoped to a specific organization:
+
+```typescript
+const orgConfig = await prisma.systemConfiguration.create({
+  data: {
+    organizationId: 'org-uuid-here',
+    category: 'features',
+    key: 'enable_advanced_analytics',
+    value: 'true',
+    configType: 'BOOLEAN',
+    description: 'Enable advanced analytics features',
+    isPublic: false,
+    isEditable: true,
+  },
+});
+```
+
+## Configuration Categories
+
+Standard categories for organizing settings:
+
+| Category | Purpose | Examples |
+|----------|---------|----------|
+| `system` | Core application settings | Upload limits, timeouts |
+| `features` | Feature toggles | Experimental features |
+| `security` | Security settings | Session timeout, MFA |
+| `notifications` | Notification config | Email templates, channels |
+| `integrations` | Third-party services | API keys, endpoints |
+| `forest` | Forest-specific settings | Default CRS, area units |
+| `worker` | Background worker config | Batch sizes, intervals |
+
+## Common Configuration Examples
+
+### System Settings
+
+```typescript
+// Maximum file upload size
+{
+  category: 'system',
+  key: 'max_upload_size_mb',
+  value: '100',
+  configType: 'INTEGER',
+  isPublic: true,
+}
+
+// Application timezone
+{
+  category: 'system',
+  key: 'default_timezone',
+  value: 'America/Caracas',
+  configType: 'STRING',
+  isPublic: true,
+}
+
+// Session timeout (minutes)
+{
+  category: 'security',
+  key: 'session_timeout_minutes',
+  value: '60',
+  configType: 'INTEGER',
+  isPublic: false,
+}
+```
+
+### Feature Toggles
+
+```typescript
+// Enable experimental features
+{
+  category: 'features',
+  key: 'enable_beta_dashboard',
+  value: 'false',
+  configType: 'BOOLEAN',
+  isPublic: false,
+  isEditable: true,
+}
+
+// Enable asset measurement module
+{
+  category: 'features',
+  key: 'enable_asset_measurements',
+  value: 'true',
+  configType: 'BOOLEAN',
+  isPublic: false,
+  isEditable: true,
+}
+```
+
+### Worker Configuration
+
+```typescript
+// Geospatial import batch size
+{
+  category: 'worker',
+  key: 'geo_import_batch_size',
+  value: '5',
+  configType: 'INTEGER',
+  isPublic: false,
+  isEditable: true,
+  validationRules: { min: 1, max: 20 },
+}
+
+// Worker polling interval
+{
+  category: 'worker',
+  key: 'worker_interval_ms',
+  value: '4000',
+  configType: 'INTEGER',
+  isPublic: false,
+  isEditable: true,
+  validationRules: { min: 1000, max: 60000 },
+}
+```
+
+### Integration Settings
+
+```typescript
+// External API endpoint
+{
+  category: 'integrations',
+  key: 'weather_api_url',
+  value: 'https://api.weather.example.com/v1',
+  configType: 'STRING',
+  isPublic: false,
+  isEditable: true,
+}
+
+// API key (sensitive)
+{
+  category: 'integrations',
+  key: 'weather_api_key',
+  value: 'encrypted-api-key-here',
+  configType: 'SECRET',
+  isPublic: false,
+  isEditable: true,
+}
+```
+
+### Forest-Specific Settings
+
+```typescript
+// Default coordinate system
+{
+  category: 'forest',
+  key: 'default_crs',
+  value: 'EPSG:4326',
+  configType: 'STRING',
+  isPublic: true,
+  isEditable: false,
+}
+
+// Area precision (decimal places)
+{
+  category: 'forest',
+  key: 'area_precision_decimals',
+  value: '4',
+  configType: 'INTEGER',
+  isPublic: true,
+  isEditable: true,
+  validationRules: { min: 2, max: 6 },
+}
+
+// Allowed shapefile size (MB)
+{
+  category: 'forest',
+  key: 'max_shapefile_size_mb',
+  value: '50',
+  configType: 'INTEGER',
+  isPublic: true,
+  isEditable: true,
+}
+```
+
+## JSON Configuration
+
+Complex settings can use JSON type:
+
+```typescript
+// Email notification settings
+{
+  category: 'notifications',
+  key: 'email_templates',
+  value: JSON.stringify({
+    welcome: {
+      subject: 'Welcome to SMyEG',
+      template: 'welcome.html',
+    },
+    passwordReset: {
+      subject: 'Password Reset Request',
+      template: 'password-reset.html',
+    },
+  }),
+  configType: 'JSON',
+  isPublic: false,
+}
+
+// Allowed file extensions
+{
+  category: 'system',
+  key: 'allowed_upload_extensions',
+  value: JSON.stringify(['.zip', '.shp', '.dbf', '.shx', '.prj']),
+  configType: 'JSON',
+  isPublic: true,
+}
+```
+
+## Validation Rules
+
+The `validationRules` JSON field supports custom validation:
+
+```typescript
+// Integer range validation
+{
+  validationRules: {
+    min: 1,
+    max: 100,
+  },
+}
+
+// String pattern validation
+{
+  validationRules: {
+    pattern: '^EPSG:\\d+$',
+    message: 'Must be a valid EPSG code',
+  },
+}
+
+// Enum validation
+{
+  validationRules: {
+    enum: ['development', 'staging', 'production'],
+  },
+}
+
+// Required validation
+{
+  validationRules: {
+    required: true,
+    minLength: 8,
+    maxLength: 255,
+  },
+}
+```
+
+## Access Control
+
+### Public vs Private Settings
+
+- **`isPublic: true`** - Visible to all authenticated users
+- **`isPublic: false`** - Visible only to administrators
+
+### Editable Settings
+
+- **`isEditable: true`** - Can be modified through UI/API
+- **`isEditable: false`** - Read-only, requires database migration to change
+
+## API Usage
+
+### Retrieve Configuration
+
+```typescript
+import { prisma } from '@/lib/prisma';
+
+// Get single setting
+async function getConfig(category: string, key: string, orgId?: string) {
+  return await prisma.systemConfiguration.findUnique({
+    where: {
+      organizationId_category_key: {
+        organizationId: orgId ?? null,
+        category,
+        key,
+      },
+    },
+  });
+}
+
+// Get all settings in category
+async function getCategoryConfig(category: string, orgId?: string) {
+  return await prisma.systemConfiguration.findMany({
+    where: {
+      organizationId: orgId ?? null,
+      category,
+    },
+  });
+}
+```
+
+### Update Configuration
+
+```typescript
+async function updateConfig(
+  category: string,
+  key: string,
+  value: string,
+  orgId?: string,
+  userId?: string
+) {
+  return await prisma.systemConfiguration.update({
+    where: {
+      organizationId_category_key: {
+        organizationId: orgId ?? null,
+        category,
+        key,
+      },
+    },
+    data: {
+      value,
+      updatedBy: userId,
+    },
+  });
+}
+```
+
+### Type-Safe Configuration Helper
+
+```typescript
+type ConfigValue<T extends ConfigType> = 
+  T extends 'INTEGER' ? number :
+  T extends 'BOOLEAN' ? boolean :
+  T extends 'JSON' ? any :
+  string;
+
+class ConfigService {
+  async get<T extends ConfigType>(
+    category: string,
+    key: string,
+    type: T,
+    orgId?: string
+  ): Promise<ConfigValue<T> | null> {
+    const config = await getConfig(category, key, orgId);
+    if (!config) return null;
+
+    switch (type) {
+      case 'INTEGER':
+        return parseInt(config.value ?? '0', 10) as ConfigValue<T>;
+      case 'BOOLEAN':
+        return (config.value === 'true') as ConfigValue<T>;
+      case 'JSON':
+        return JSON.parse(config.value ?? '{}') as ConfigValue<T>;
+      default:
+        return config.value as ConfigValue<T>;
+    }
+  }
+}
+
+// Usage
+const configService = new ConfigService();
+const batchSize = await configService.get('worker', 'geo_import_batch_size', 'INTEGER');
+const isEnabled = await configService.get('features', 'enable_beta_dashboard', 'BOOLEAN');
+```
+
+## Audit Trail
+
+All configuration changes are tracked:
+
+- `updatedAt` - Timestamp of last modification
+- `updatedBy` - UUID of user who made the change
+- Audit log entries (via `AuditLog` table) for configuration changes
+
+## Security Considerations
+
+<Warning>
+  **SECRET type configurations** should be encrypted at rest. Implement encryption/decryption middleware before storing and retrieving SECRET values.
+</Warning>
+
+### Best Practices
+
+1. **Never expose SECRET configs** in public APIs or logs
+2. **Validate all user inputs** using `validationRules`
+3. **Limit editable flags** for critical system settings
+4. **Use organization scoping** to isolate tenant configurations
+5. **Audit all changes** to sensitive settings
+
+## Migration Example
+
+Seed initial configuration:
+
+```typescript seed.ts
+import { PrismaClient, ConfigType } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+const defaultConfigs = [
+  {
+    category: 'system',
+    key: 'max_upload_size_mb',
+    value: '100',
+    configType: 'INTEGER' as ConfigType,
+    description: 'Maximum file upload size in MB',
+    isPublic: true,
+    isEditable: true,
+  },
+  {
+    category: 'forest',
+    key: 'default_crs',
+    value: 'EPSG:4326',
+    configType: 'STRING' as ConfigType,
+    description: 'Default coordinate reference system',
+    isPublic: true,
+    isEditable: false,
+  },
+  {
+    category: 'worker',
+    key: 'geo_import_batch_size',
+    value: '5',
+    configType: 'INTEGER' as ConfigType,
+    description: 'Geospatial import batch size',
+    isPublic: false,
+    isEditable: true,
+    validationRules: { min: 1, max: 20 },
+  },
+];
+
+async function seedConfig() {
+  for (const config of defaultConfigs) {
+    await prisma.systemConfiguration.upsert({
+      where: {
+        organizationId_category_key: {
+          organizationId: null,
+          category: config.category,
+          key: config.key,
+        },
+      },
+      update: {},
+      create: config,
+    });
+  }
+}
+
+seedConfig();
+```
+
+<Check>
+  System configuration provides a flexible, type-safe way to manage application settings at global and organization levels.
+</Check>

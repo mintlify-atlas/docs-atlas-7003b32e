@@ -1,0 +1,382 @@
+---
+title: 'Measurement Campaigns'
+description: 'API endpoints for managing asset measurement campaigns'
+---
+
+## Overview
+
+Measurement campaigns organize field observations by domain (biological, dendrometric, demographic, hydrological) and protocol type. Each campaign is associated with a forest patrimony Level 4 unit and contains observations and calculation results.
+
+## List Campaigns
+
+<RequestExample>
+```bash GET /api/assets/measurement-campaigns
+curl -X GET "https://api.smyeg.com/api/assets/measurement-campaigns?level4Id=abc123&domain=BIO&page=1&limit=25" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+</RequestExample>
+
+Retrieve a paginated list of measurement campaigns with optional filtering.
+
+### Query Parameters
+
+<ParamField query="level4Id" type="string">
+  Filter by forest patrimony Level 4 unit ID
+</ParamField>
+
+<ParamField query="domain" type="string">
+  Filter by domain: `BIO`, `DENDRO`, `DEMO`, `HIDRO`
+</ParamField>
+
+<ParamField query="protocolType" type="string">
+  Filter by protocol type (e.g., `BIO_SOBREVIVENCIA`, `BIO_PREOPERATIVO`)
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by campaign status: `DRAFT`, `ACTIVE`, `COMPLETED`, `ARCHIVED`
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search by campaign code or name (case-insensitive)
+</ParamField>
+
+<ParamField query="page" type="number" default="1">
+  Page number for pagination
+</ParamField>
+
+<ParamField query="limit" type="number" default="25">
+  Number of items per page
+</ParamField>
+
+<ParamField query="sortBy" type="string" default="campaignDate">
+  Field to sort by: `campaignDate`, `createdAt`, `campaignCode`
+</ParamField>
+
+<ParamField query="sortOrder" type="string" default="desc">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of campaign objects
+  
+  <ResponseField name="id" type="string">
+    Unique campaign identifier
+  </ResponseField>
+  
+  <ResponseField name="organizationId" type="string">
+    Organization ID owning the campaign
+  </ResponseField>
+  
+  <ResponseField name="level4Id" type="string">
+    Forest patrimony Level 4 unit ID
+  </ResponseField>
+  
+  <ResponseField name="domain" type="string">
+    Campaign domain: `BIO`, `DENDRO`, `DEMO`, `HIDRO`
+  </ResponseField>
+  
+  <ResponseField name="protocolType" type="string">
+    Measurement protocol type
+  </ResponseField>
+  
+  <ResponseField name="campaignCode" type="string">
+    Unique campaign code
+  </ResponseField>
+  
+  <ResponseField name="campaignName" type="string">
+    Descriptive campaign name
+  </ResponseField>
+  
+  <ResponseField name="campaignDate" type="string">
+    Campaign date (ISO 8601 format)
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Campaign status: `DRAFT`, `ACTIVE`, `COMPLETED`, `ARCHIVED`
+  </ResponseField>
+  
+  <ResponseField name="level4" type="object">
+    Level 4 unit details
+    
+    <ResponseField name="id" type="string">
+      Level 4 unit ID
+    </ResponseField>
+    
+    <ResponseField name="code" type="string">
+      Level 4 unit code
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Level 4 unit name
+    </ResponseField>
+  </ResponseField>
+  
+  <ResponseField name="_count" type="object">
+    Related entity counts
+    
+    <ResponseField name="observations" type="number">
+      Number of observations in this campaign
+    </ResponseField>
+    
+    <ResponseField name="results" type="number">
+      Number of result snapshots
+    </ResponseField>
+    
+    <ResponseField name="calculationJobs" type="number">
+      Number of calculation jobs
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata
+  
+  <ResponseField name="total" type="number">
+    Total number of campaigns matching filters
+  </ResponseField>
+  
+  <ResponseField name="page" type="number">
+    Current page number
+  </ResponseField>
+  
+  <ResponseField name="limit" type="number">
+    Items per page
+  </ResponseField>
+  
+  <ResponseField name="totalPages" type="number">
+    Total number of pages
+  </ResponseField>
+</ResponseField>
+
+<ResponseExample>
+```json
+{
+  "items": [
+    {
+      "id": "clx1234567890abcdef",
+      "organizationId": "org_abc123",
+      "level4Id": "level4_xyz789",
+      "domain": "BIO",
+      "protocolType": "BIO_SOBREVIVENCIA",
+      "campaignCode": "BIO_SOBREV_2024_Q1",
+      "campaignName": "Survival Campaign Q1 2024",
+      "campaignDate": "2024-03-15T00:00:00.000Z",
+      "status": "ACTIVE",
+      "schemaVersion": "1.0",
+      "notes": "First quarter survival assessment",
+      "metadata": {},
+      "createdAt": "2024-03-01T10:00:00.000Z",
+      "updatedAt": "2024-03-01T10:00:00.000Z",
+      "level4": {
+        "id": "level4_xyz789",
+        "code": "L4-001",
+        "name": "Rodal Norte"
+      },
+      "_count": {
+        "observations": 150,
+        "results": 3,
+        "calculationJobs": 2
+      }
+    }
+  ],
+  "pagination": {
+    "total": 45,
+    "page": 1,
+    "limit": 25,
+    "totalPages": 2
+  }
+}
+```
+</ResponseExample>
+
+---
+
+## Create Campaign
+
+<RequestExample>
+```bash POST /api/assets/measurement-campaigns
+curl -X POST "https://api.smyeg.com/api/assets/measurement-campaigns" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "level4Id": "level4_xyz789",
+    "domain": "BIO",
+    "protocolType": "BIO_SOBREVIVENCIA",
+    "campaignCode": "BIO_SOBREV_2024_Q2",
+    "campaignName": "Survival Campaign Q2 2024",
+    "campaignDate": "2024-06-15T00:00:00.000Z",
+    "schemaVersion": "1.0",
+    "status": "DRAFT",
+    "notes": "Second quarter survival assessment"
+  }'
+```
+</RequestExample>
+
+Create a new measurement campaign.
+
+### Request Body
+
+<ParamField body="level4Id" type="string" required>
+  Forest patrimony Level 4 unit ID where measurements will be taken
+</ParamField>
+
+<ParamField body="domain" type="string" required>
+  Campaign domain: `BIO`, `DENDRO`, `DEMO`, or `HIDRO`
+</ParamField>
+
+<ParamField body="protocolType" type="string" required>
+  Measurement protocol type (e.g., `BIO_SOBREVIVENCIA`, `BIO_PREOPERATIVO`, `DENDRO_PARCELA_CARBONO`)
+</ParamField>
+
+<ParamField body="campaignCode" type="string" required>
+  Unique campaign code (must be unique within the organization)
+</ParamField>
+
+<ParamField body="campaignName" type="string" required>
+  Descriptive campaign name
+</ParamField>
+
+<ParamField body="campaignDate" type="string" required>
+  Campaign date in ISO 8601 format
+</ParamField>
+
+<ParamField body="schemaVersion" type="string" required>
+  Schema version for validation (e.g., "1.0")
+</ParamField>
+
+<ParamField body="status" type="string" default="DRAFT">
+  Initial campaign status: `DRAFT`, `ACTIVE`, `COMPLETED`, or `ARCHIVED`
+</ParamField>
+
+<ParamField body="notes" type="string">
+  Optional campaign notes
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Optional metadata object for custom fields
+</ParamField>
+
+### Response
+
+Returns the created campaign object with a 201 status code.
+
+<ResponseExample>
+```json
+{
+  "id": "clx9876543210fedcba",
+  "organizationId": "org_abc123",
+  "level4Id": "level4_xyz789",
+  "domain": "BIO",
+  "protocolType": "BIO_SOBREVIVENCIA",
+  "campaignCode": "BIO_SOBREV_2024_Q2",
+  "campaignName": "Survival Campaign Q2 2024",
+  "campaignDate": "2024-06-15T00:00:00.000Z",
+  "schemaVersion": "1.0",
+  "status": "DRAFT",
+  "notes": "Second quarter survival assessment",
+  "metadata": {},
+  "createdAt": "2024-06-01T10:00:00.000Z",
+  "updatedAt": "2024-06-01T10:00:00.000Z",
+  "createdById": "user_123",
+  "level4": {
+    "id": "level4_xyz789",
+    "code": "L4-001",
+    "name": "Rodal Norte"
+  }
+}
+```
+</ResponseExample>
+
+---
+
+## Update Campaign
+
+<RequestExample>
+```bash PATCH /api/assets/measurement-campaigns
+curl -X PATCH "https://api.smyeg.com/api/assets/measurement-campaigns" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "clx9876543210fedcba",
+    "campaignName": "Updated Survival Campaign Q2 2024",
+    "status": "ACTIVE"
+  }'
+```
+</RequestExample>
+
+Update an existing measurement campaign. Only provided fields will be updated.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Campaign ID to update
+</ParamField>
+
+<ParamField body="campaignName" type="string">
+  Updated campaign name
+</ParamField>
+
+<ParamField body="campaignDate" type="string">
+  Updated campaign date (ISO 8601 format)
+</ParamField>
+
+<ParamField body="schemaVersion" type="string">
+  Updated schema version
+</ParamField>
+
+<ParamField body="status" type="string">
+  Updated status: `DRAFT`, `ACTIVE`, `COMPLETED`, or `ARCHIVED`
+</ParamField>
+
+<ParamField body="notes" type="string">
+  Updated notes
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Updated metadata object
+</ParamField>
+
+### Response
+
+Returns the updated campaign object.
+
+---
+
+## Delete Campaign
+
+<RequestExample>
+```bash DELETE /api/assets/measurement-campaigns
+curl -X DELETE "https://api.smyeg.com/api/assets/measurement-campaigns" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "clx9876543210fedcba"
+  }'
+```
+</RequestExample>
+
+Delete a measurement campaign. Campaigns with observations or results cannot be deleted.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Campaign ID to delete
+</ParamField>
+
+### Response
+
+<ResponseExample>
+```json
+{
+  "id": "clx9876543210fedcba"
+}
+```
+</ResponseExample>
+
+### Error Codes
+
+- `404` - Campaign not found
+- `409` - Campaign has associated observations or results and cannot be deleted
+- `403` - Insufficient permissions

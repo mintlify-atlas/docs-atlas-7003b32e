@@ -1,0 +1,253 @@
+---
+title: Database Migrations
+description: Managing Prisma migrations and database schema changes in SMyEG
+---
+
+## Overview
+
+SMyEG uses **Prisma** as its ORM and migration tool to manage database schema changes. Migrations ensure consistent database structure across development, staging, and production environments.
+
+## Migration Workflow
+
+### Generating Prisma Client
+
+After modifying the schema, generate the Prisma client:
+
+```bash
+npm run db:generate
+```
+
+This command runs `prisma generate` and updates TypeScript types for database models.
+
+### Creating Migrations
+
+When you modify `prisma/schema.prisma`, create a new migration:
+
+```bash
+npm run db:migrate
+```
+
+This executes `prisma migrate dev` which:
+- Creates a new migration file in `prisma/migrations/`
+- Applies the migration to your development database
+- Regenerates the Prisma client
+
+<Note>
+Migration files are timestamped (e.g., `20260309175919_assets_measurement_smyge`). Never edit existing migration files in production.
+</Note>
+
+### Applying Migrations
+
+**Development:**
+```bash
+npm run db:migrate
+```
+
+**Production:**
+```bash
+npx prisma migrate deploy
+```
+
+<Note>
+`migrate deploy` applies pending migrations without creating new ones. Always use this in production and CI/CD pipelines.
+</Note>
+
+### Migration Rollback
+
+Prisma does not provide automatic rollback. To revert a migration:
+
+1. **Create a reverse migration** manually in SQL
+2. **Restore from backup** if data corruption occurred
+3. **Reset the database** (development only):
+
+```bash
+npx prisma migrate reset
+```
+
+<Warning>
+`prisma migrate reset` drops the database, recreates it, applies all migrations, and runs seed data. **Never use in production.**
+</Warning>
+
+## Partition Management
+
+### Audit Logs Partitioning
+
+The `audit_logs` table uses **monthly partitioning** to optimize performance and manage data retention.
+
+#### Creating Monthly Partitions
+
+Run the partition script to create the next month's partition:
+
+```bash
+tsx scripts/create-audit-partition.ts
+```
+
+This script should be scheduled to run monthly (e.g., via cron or scheduler).
+
+#### Manual Partition Creation
+
+If you need to create a specific partition manually:
+
+```sql
+CREATE TABLE IF NOT EXISTS audit_logs_2026_04
+PARTITION OF audit_logs
+FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
+```
+
+<Note>
+The initial partition setup is in `prisma/migrations_backup_20260224_132859/0001_extensions_partitioning/migration.sql`.
+</Note>
+
+## PostGIS and Spatial Extensions
+
+SMyEG requires PostgreSQL extensions for geospatial operations:
+
+- **uuid-ossp**: UUID generation
+- **pgcrypto**: Cryptographic functions
+- **pg_trgm**: Trigram matching for full-text search
+- **postgis**: Geospatial data types and functions
+
+These are installed automatically in the first migration:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+CREATE EXTENSION IF NOT EXISTS "postgis";
+```
+
+## Database Triggers
+
+### Auto-Update Timestamps
+
+Many tables have `updated_at` triggers that automatically set the timestamp on updates:
+
+```sql
+CREATE TRIGGER trigger_update_users_updated_at 
+BEFORE UPDATE ON users 
+FOR EACH ROW 
+EXECUTE FUNCTION update_updated_at_column();
+```
+
+### Geometry Metrics Calculation
+
+The `forest_geometry_n4` table has a trigger that calculates area and centroid:
+
+```sql
+CREATE TRIGGER trg_forest_metrics
+BEFORE INSERT OR UPDATE OF geom
+ON public.forest_geometry_n4
+FOR EACH ROW
+EXECUTE FUNCTION public.fn_calculate_forest_metrics();
+```
+
+This trigger automatically:
+- Validates and repairs geometries with `ST_MakeValid`
+- Converts to MultiPolygon
+- Calculates `superficie_ha` (area in hectares)
+- Sets centroid point
+
+## Migration Best Practices
+
+### Before Creating Migrations
+
+1. **Review schema changes** carefully
+2. **Test locally** with representative data
+3. **Check indexes and constraints** for performance impact
+4. **Plan for large tables** - use concurrent indexes if needed
+
+### Migration Naming
+
+Use descriptive migration names:
+
+```bash
+npx prisma migrate dev --name add_level4_land_use_columns
+```
+
+### Schema Version Control
+
+- Commit migration files to Git
+- Never modify existing migrations
+- Document breaking changes in migration comments
+
+### Production Deployment
+
+1. **Backup database** before deploying
+2. **Test migrations** on staging environment
+3. **Run migrations** during maintenance window if schema-locking
+4. **Monitor application** for errors post-deployment
+
+```bash
+# Backup
+pg_dump -U postgres -d smyeg_prod > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Deploy migrations
+npx prisma migrate deploy
+
+# Verify
+npx prisma migrate status
+```
+
+## Common Migration Tasks
+
+### Adding a New Column
+
+1. Edit `prisma/schema.prisma`:
+
+```prisma
+model ForestPatrimonyLevel4 {
+  // ... existing fields
+  newField String? @db.VarChar(255)
+}
+```
+
+2. Create migration:
+
+```bash
+npm run db:migrate
+```
+
+### Creating Indexes
+
+For performance-critical queries, add indexes in migrations:
+
+```sql
+CREATE INDEX idx_audit_logs_user_action 
+ON "AuditLog" ("userId", "action", "createdAt");
+```
+
+### Adding Foreign Keys
+
+Prisma automatically generates foreign key constraints from relations in `schema.prisma`.
+
+## Troubleshooting
+
+### Migration Out of Sync
+
+If migrations are out of sync:
+
+```bash
+npx prisma migrate resolve --applied "20260309175919_migration_name"
+```
+
+### Shadow Database Issues
+
+If you encounter shadow database errors in CI/CD:
+
+```bash
+npx prisma migrate deploy --skip-generate
+```
+
+### Database Connection Issues
+
+Verify `DATABASE_URL` in `.env`:
+
+```bash
+postgresql://user:password@localhost:5432/smyeg_db?schema=public
+```
+
+## Related Resources
+
+- [Prisma Migration Documentation](https://www.prisma.io/docs/concepts/components/prisma-migrate)
+- [Monitoring](/maintenance/monitoring)
+- [Troubleshooting](/maintenance/troubleshooting)

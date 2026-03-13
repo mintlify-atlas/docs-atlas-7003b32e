@@ -1,0 +1,264 @@
+---
+title: Docker Deployment
+description: Deploy SMyEG using Docker Compose for PostgreSQL and Redis
+---
+
+## Overview
+
+SMyEG uses Docker Compose to run PostgreSQL and Redis services in containers. The application itself runs outside Docker in development or can be containerized for production.
+
+## Docker Compose Configuration
+
+The `docker-compose.yml` defines two core services:
+
+### PostgreSQL Database
+
+```yaml
+postgres:
+  image: postgres:15-alpine
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: app_dev
+  ports:
+    - "5432:5432"
+  volumes:
+    - pgdata:/var/lib/postgresql/data
+```
+
+**Configuration details:**
+- **Image**: PostgreSQL 15 on Alpine Linux (lightweight)
+- **Default credentials**: `postgres/postgres` (change in production)
+- **Database name**: `app_dev`
+- **Port**: 5432 (mapped to host)
+- **Persistent storage**: Named volume `pgdata`
+
+### Redis Cache
+
+```yaml
+redis:
+  image: redis:7-alpine
+  command: redis-server --appendonly yes
+  ports:
+    - "6379:6379"
+  volumes:
+    - redisdata:/data
+```
+
+**Configuration details:**
+- **Image**: Redis 7 on Alpine Linux
+- **Persistence**: AOF (Append-Only File) enabled via `--appendonly yes`
+- **Port**: 6379 (mapped to host)
+- **Persistent storage**: Named volume `redisdata`
+
+## Getting Started
+
+<Steps>
+  <Step title="Install Docker">
+    Download and install [Docker Desktop](https://www.docker.com/products/docker-desktop/) for your platform.
+  </Step>
+
+  <Step title="Start services">
+    From the project root, run:
+    ```bash
+    docker compose up -d
+    ```
+    The `-d` flag runs containers in detached mode (background).
+  </Step>
+
+  <Step title="Verify services">
+    Check that both containers are running:
+    ```bash
+    docker compose ps
+    ```
+    You should see `postgres` and `redis` with status `Up`.
+  </Step>
+
+  <Step title="Run database migrations">
+    Generate Prisma client and apply migrations:
+    ```bash
+    npm run db:generate
+    npm run db:migrate
+    ```
+  </Step>
+
+  <Step title="Seed initial data">
+    Load base data including the admin user:
+    ```bash
+    npm run db:seed
+    ```
+  </Step>
+</Steps>
+
+## Volume Management
+
+Docker Compose creates two named volumes for data persistence:
+
+- `pgdata`: Stores PostgreSQL database files
+- `redisdata`: Stores Redis AOF and RDB files
+
+### View volumes
+
+```bash
+docker volume ls
+```
+
+### Backup PostgreSQL data
+
+```bash
+docker compose exec postgres pg_dump -U postgres app_dev > backup.sql
+```
+
+### Restore PostgreSQL data
+
+```bash
+docker compose exec -T postgres psql -U postgres app_dev < backup.sql
+```
+
+### Remove volumes (data loss!)
+
+<Warning>
+  This will permanently delete all database and cache data.
+</Warning>
+
+```bash
+docker compose down -v
+```
+
+## Service Management
+
+### Stop services
+
+```bash
+docker compose stop
+```
+
+### Restart services
+
+```bash
+docker compose restart
+```
+
+### View logs
+
+```bash
+# All services
+docker compose logs -f
+
+# PostgreSQL only
+docker compose logs -f postgres
+
+# Redis only
+docker compose logs -f redis
+```
+
+### Remove containers (keeps volumes)
+
+```bash
+docker compose down
+```
+
+## Connection Strings
+
+When services are running, connect using:
+
+**PostgreSQL:**
+```
+postgresql://postgres:postgres@localhost:5432/app_dev
+```
+
+**Redis:**
+```
+redis://localhost:6379
+```
+
+<Warning>
+  For production deployments, change default credentials and restrict port exposure.
+</Warning>
+
+## Production Considerations
+
+### Security
+
+1. **Change default passwords**
+   ```yaml
+   environment:
+     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+   ```
+
+2. **Restrict port binding** to localhost only:
+   ```yaml
+   ports:
+     - "127.0.0.1:5432:5432"
+   ```
+
+3. **Use secrets management** for sensitive environment variables
+
+### Performance
+
+1. **Configure PostgreSQL** for your workload:
+   ```yaml
+   command:
+     - postgres
+     - -c
+     - shared_buffers=256MB
+     - -c
+     - max_connections=200
+   ```
+
+2. **Set Redis memory limits**:
+   ```yaml
+   command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+   ```
+
+3. **Use separate networks** to isolate services
+
+### Monitoring
+
+Add health checks to detect service issues:
+
+```yaml
+postgres:
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
+redis:
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+```
+
+## Troubleshooting
+
+### Port already in use
+
+If port 5432 or 6379 is already in use:
+
+```yaml
+ports:
+  - "5433:5432"  # Map to different host port
+```
+
+Update your connection string accordingly.
+
+### Permission errors on volumes
+
+Ensure Docker has permission to create volumes in your system.
+
+### Container won't start
+
+Check logs for errors:
+```bash
+docker compose logs postgres
+docker compose logs redis
+```
+
+Common issues:
+- Insufficient disk space
+- Corrupted volume data (remove and recreate)
+- Port conflicts

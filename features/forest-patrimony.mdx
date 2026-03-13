@@ -1,0 +1,452 @@
+---
+title: 'Forest Patrimony Hierarchy'
+description: 'Hierarchical forest unit management across Levels 2-5 with patrimony types'
+---
+
+## Overview
+
+The Forest Patrimony system organizes forest assets in a hierarchical structure spanning five levels (Level 2 through Level 6). This structure enables detailed tracking of forest properties from large estates down to individual biological assets.
+
+## Hierarchy Levels
+
+<CardGroup cols={2}>
+  <Card title="Level 2" icon="mountain">
+    **Finca / Predio / Hato**
+    
+    Top-level land units representing estates, farms, or ranches. Contains legal documentation and ownership information.
+  </Card>
+  
+  <Card title="Level 3" icon="border-all">
+    **Compartimento / Block / Lote**
+    
+    Major subdivisions within Level 2 units for management and planning purposes.
+  </Card>
+  
+  <Card title="Level 4" icon="map">
+    **Rodal / Parcela**
+    
+    Operational forest management units with specific land uses, rotations, and biological assets.
+  </Card>
+  
+  <Card title="Level 5" icon="ruler">
+    **Referencia / Subparcela**
+    
+    Measurement plots and sampling units with defined geometries (rectangular, circular, etc.).
+  </Card>
+</CardGroup>
+
+## Level 2: Top-Level Units
+
+### Schema Definition
+
+```prisma
+model ForestPatrimonyLevel2 {
+  id                   String                 @id @default(uuid())
+  organizationId       String?
+  code                 String                 @unique
+  name                 String
+  type                 PatrimonyLevel2Type
+  legalDocumentDate    DateTime?
+  legalStatus          LegalStatus?
+  totalAreaHa          Decimal                @db.Decimal(12, 2)
+  centroidLatitude     Decimal?               @db.Decimal(10, 7)
+  centroidLongitude    Decimal?               @db.Decimal(10, 7)
+  ownerRepresentative  String?
+  publicRegistryNumber String?
+  publicRegistryDate   DateTime?
+  address              String?
+  lastInfoDate         DateTime?
+  isActive             Boolean                @default(true)
+  
+  neighbors            ForestPatrimonyNeighbor[]
+  level3Units          ForestPatrimonyLevel3[]
+}
+
+enum PatrimonyLevel2Type {
+  FINCA
+  PREDIO
+  HATO
+  FUNDO
+  HACIENDA
+  ABRAE
+}
+
+enum LegalStatus {
+  ADQUISICION
+  ARRIENDO
+  USUFRUCTO
+  COMODATO
+  DECRETO
+}
+```
+
+### Level 2 Features
+
+<Accordion title="Legal Documentation">
+  Level 2 units track legal ownership and registration:
+  
+  - **Legal Document Date**: Date of acquisition or legal documentation
+  - **Legal Status**: Type of legal ownership (acquisition, lease, usufruct, etc.)
+  - **Public Registry**: Registry number and date
+  - **Owner Representative**: Legal representative of the owner
+</Accordion>
+
+<Accordion title="Geographic Data">
+  Each unit stores geographic information:
+  
+  - **Total Area**: Measured in hectares with high precision
+  - **Centroid Coordinates**: Latitude/longitude of the geometric center
+  - **Address**: Physical location description
+</Accordion>
+
+<Accordion title="Neighboring Properties">
+  The system tracks adjacent properties for boundary management:
+  
+  ```prisma
+  model ForestPatrimonyNeighbor {
+    id        String                @id @default(uuid())
+    level2Id  String
+    code      String
+    name      String
+    type      String
+    level2    ForestPatrimonyLevel2 @relation(fields: [level2Id], references: [id])
+    
+    @@unique([level2Id, code])
+  }
+  ```
+</Accordion>
+
+## Level 3: Management Compartments
+
+### Schema Definition
+
+```prisma
+model ForestPatrimonyLevel3 {
+  id                String                  @id @default(uuid())
+  level2Id          String
+  code              String
+  name              String
+  type              PatrimonyLevel3Type
+  totalAreaHa       Decimal                 @db.Decimal(12, 2)
+  centroidLatitude  Decimal?                @db.Decimal(10, 7)
+  centroidLongitude Decimal?                @db.Decimal(10, 7)
+  lastInfoDate      DateTime?
+  isActive          Boolean                 @default(true)
+  
+  level2            ForestPatrimonyLevel2   @relation(fields: [level2Id], references: [id])
+  level4Units       ForestPatrimonyLevel4[]
+  
+  @@unique([level2Id, code])
+}
+
+enum PatrimonyLevel3Type {
+  COMPARTIMIENTO
+  BLOCK
+  SECCION
+  LOTE
+  ZONA
+  BLOQUE
+  ZONIFICACION
+}
+```
+
+### Level 3 Characteristics
+
+- **Unique codes within Level 2**: Each compartment has a code unique to its parent unit
+- **Area aggregation**: Total area is calculated from child Level 4 units
+- **Management zones**: Used for organizing rotation schedules and silvicultural treatments
+
+## Level 4: Operational Units
+
+Level 4 is the most feature-rich level, representing operational forest stands:
+
+### Schema Definition
+
+```prisma
+model ForestPatrimonyLevel4 {
+  id                String                        @id @default(uuid())
+  level3Id          String
+  code              String
+  name              String
+  type              PatrimonyLevel4Type
+  fscCertificateStatus FscCertificateStatus       @default(NO)
+  
+  // Land Use Tracking
+  currentLandUseName    String?
+  previousLandUseName   String?
+  landUseChangeDate     DateTime?
+  
+  // Area Information
+  totalAreaHa       Decimal                       @db.Decimal(12, 2)
+  plantableAreaHa   Decimal?                      @db.Decimal(12, 2)
+  
+  // Management Data
+  rotationPhase     String?
+  previousUse       String?
+  
+  // Geographic
+  centroidLatitude  Decimal?                      @db.Decimal(10, 7)
+  centroidLongitude Decimal?                      @db.Decimal(10, 7)
+  
+  lastInfoDate      DateTime?
+  isActive          Boolean                       @default(true)
+  
+  level3            ForestPatrimonyLevel3         @relation(fields: [level3Id], references: [id])
+  level5Units       ForestPatrimonyLevel5[]
+  level6Assets      ForestBiologicalAssetLevel6[]
+  landPatrimonialVariations LandPatrimonialVariation[]
+  geometryVersions  ForestGeometryN4[]
+  assetMeasurementCampaigns AssetMeasurementCampaign[]
+  
+  @@unique([level3Id, code])
+}
+
+enum PatrimonyLevel4Type {
+  RODAL
+  PARCELA
+  ENUMERATION
+  UNIDAD_DE_MANEJO
+  CONUCO
+  OTRO_USO
+}
+
+enum FscCertificateStatus {
+  SI
+  NO
+}
+```
+
+### Level 4 Features
+
+<AccordionGroup>
+  <Accordion title="Land Use Management">
+    Track land use changes over time:
+    
+    - **Current Land Use**: Active land use classification
+    - **Previous Land Use**: Historical land use for impact analysis
+    - **Land Use Change Date**: When the transition occurred
+    
+    This enables tracking of land use variations and their impact on patrimony value.
+  </Accordion>
+  
+  <Accordion title="FSC Certification">
+    Track Forest Stewardship Council certification status for each operational unit.
+  </Accordion>
+  
+  <Accordion title="Plantable vs Total Area">
+    Distinguish between:
+    - **Total Area**: Complete unit area including roads, waterways, etc.
+    - **Plantable Area**: Area suitable for tree planting and production
+  </Accordion>
+  
+  <Accordion title="Rotation Management">
+    Track rotation phases for plantation forests:
+    - Establishment
+    - Growth
+    - Pre-harvest
+    - Post-harvest
+  </Accordion>
+</AccordionGroup>
+
+## Level 5: Measurement Plots
+
+### Schema Definition
+
+```prisma
+model ForestPatrimonyLevel5 {
+  id                String                @id @default(uuid())
+  level4Id          String
+  code              String
+  name              String
+  type              PatrimonyLevel5Type
+  shapeType         PlotShapeType
+  
+  // Plot Dimensions
+  dimension1M       Decimal?              @db.Decimal(12, 4)
+  dimension2M       Decimal?              @db.Decimal(12, 4)
+  dimension3M       Decimal?              @db.Decimal(12, 4)
+  dimension4M       Decimal?              @db.Decimal(12, 4)
+  areaM2            Decimal               @db.Decimal(12, 4)
+  
+  centroidLatitude  Decimal?              @db.Decimal(10, 7)
+  centroidLongitude Decimal?              @db.Decimal(10, 7)
+  lastInfoDate      DateTime?
+  isActive          Boolean               @default(true)
+  
+  level4            ForestPatrimonyLevel4 @relation(fields: [level4Id], references: [id])
+  
+  @@unique([level4Id, code])
+}
+
+enum PatrimonyLevel5Type {
+  REFERENCIA
+  SUBUNIDAD
+  SUBPARCELA
+  MUESTRA
+  SUBMUESTRA
+}
+
+enum PlotShapeType {
+  RECTANGULAR
+  CUADRADA
+  CIRCULAR
+  HEXAGONAL
+}
+```
+
+### Plot Geometry
+
+Level 5 units support various plot shapes:
+
+<CardGroup cols={2}>
+  <Card title="Rectangular Plots" icon="rectangle-wide">
+    - `dimension1M`: Length
+    - `dimension2M`: Width
+    - Area = dimension1 × dimension2
+  </Card>
+  
+  <Card title="Square Plots" icon="square">
+    - `dimension1M`: Side length
+    - Area = dimension1²
+  </Card>
+  
+  <Card title="Circular Plots" icon="circle">
+    - `dimension1M`: Radius or diameter
+    - Area = πr²
+  </Card>
+  
+  <Card title="Hexagonal Plots" icon="hexagon">
+    - `dimension1M`: Side length
+    - Custom area calculation
+  </Card>
+</CardGroup>
+
+## Code Structure and Uniqueness
+
+### Hierarchical Codes
+
+Each level has codes unique within its parent:
+
+```typescript
+// Example hierarchy
+Level 2: "FINCA-01"
+  Level 3: "COMP-A" (unique within FINCA-01)
+    Level 4: "RODAL-12" (unique within COMP-A)
+      Level 5: "PLOT-001" (unique within RODAL-12)
+```
+
+Enforced by database constraints:
+
+```prisma
+@@unique([level2Id, code])  // Level 3
+@@unique([level3Id, code])  // Level 4
+@@unique([level4Id, code])  // Level 5
+```
+
+### Full Path Resolution
+
+To get the complete path, traverse the hierarchy:
+
+```typescript
+const level4WithPath = await prisma.forestPatrimonyLevel4.findUnique({
+  where: { id },
+  include: {
+    level3: {
+      include: {
+        level2: true
+      }
+    }
+  }
+});
+
+const fullPath = `${level4WithPath.level3.level2.code}/${level4WithPath.level3.code}/${level4WithPath.code}`;
+```
+
+## Management Workflows
+
+<Steps>
+  <Step title="Create Level 2 Unit">
+    Register the top-level property with legal documentation and total area.
+  </Step>
+  
+  <Step title="Define Level 3 Compartments">
+    Subdivide the property into management zones based on terrain, access, or silvicultural strategy.
+  </Step>
+  
+  <Step title="Establish Level 4 Stands">
+    Create operational units (rodales) with specific land uses, rotation phases, and biological assets.
+  </Step>
+  
+  <Step title="Import Geometries">
+    Upload shapefiles to define precise boundaries and calculate areas for all levels.
+  </Step>
+  
+  <Step title="Create Level 5 Plots">
+    Define measurement plots within stands for inventory and monitoring campaigns.
+  </Step>
+  
+  <Step title="Track Changes">
+    Record land use changes, variations, and asset measurements over time.
+  </Step>
+</Steps>
+
+## Geospatial Integration
+
+Level 4 units have versioned geometries:
+
+```prisma
+model ForestGeometryN4 {
+  id             String                 @id @default(uuid())
+  organizationId String
+  level4Id       String
+  geom           Unsupported("geometry(MultiPolygon, 4326)")
+  centroid       Unsupported("geometry(Point, 4326)")
+  superficieHa   Decimal                @db.Decimal(12, 4)
+  validFrom      DateTime               @default(now())
+  validTo        DateTime?
+  isActive       Boolean                @default(true)
+  
+  level4         ForestPatrimonyLevel4  @relation(fields: [level4Id], references: [id])
+}
+```
+
+<Info>
+  Geometries are versioned with `validFrom` and `validTo` timestamps, enabling historical tracking of boundary changes.
+</Info>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Maintain Hierarchical Integrity">
+    Always create units in top-down order. Ensure parent units exist before creating children.
+  </Accordion>
+  
+  <Accordion title="Use Descriptive Codes">
+    Establish consistent coding conventions that are meaningful to field staff:
+    - Level 2: Property abbreviations
+    - Level 3: Zone identifiers
+    - Level 4: Sequential or grid-based codes
+  </Accordion>
+  
+  <Accordion title="Update Areas After Geometry Import">
+    After importing shapefiles, recalculate `totalAreaHa` from the actual geometry to ensure consistency.
+  </Accordion>
+  
+  <Accordion title="Soft Delete Instead of Hard Delete">
+    Use `isActive = false` instead of deleting records to maintain historical data integrity.
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Geospatial Import" icon="map-location-dot" href="/features/geospatial-import">
+    Import shapefiles to define unit boundaries
+  </Card>
+  <Card title="Biological Assets" icon="seedling" href="/features/biological-assets">
+    Manage forest biological assets (Level 6)
+  </Card>
+  <Card title="Land Accounting" icon="chart-line" href="/features/land-accounting">
+    Track land use changes and variations
+  </Card>
+</CardGroup>

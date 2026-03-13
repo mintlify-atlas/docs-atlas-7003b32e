@@ -1,0 +1,396 @@
+---
+title: 'Observations'
+description: 'API endpoints for creating and managing measurement observations'
+---
+
+## Overview
+
+Observations contain field measurement data collected during campaigns. Each observation is associated with a campaign and includes a JSON payload containing protocol-specific measurements.
+
+## List Observations
+
+<RequestExample>
+```bash GET /api/assets/measurement-observations
+curl -X GET "https://api.smyeg.com/api/assets/measurement-observations?campaignId=clx123&page=1&limit=25" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+</RequestExample>
+
+Retrieve a paginated list of measurement observations with optional filtering.
+
+### Query Parameters
+
+<ParamField query="campaignId" type="string">
+  Filter by campaign ID
+</ParamField>
+
+<ParamField query="domain" type="string">
+  Filter by domain: `BIO`, `DENDRO`, `DEMO`, `HIDRO`
+</ParamField>
+
+<ParamField query="protocolType" type="string">
+  Filter by protocol type
+</ParamField>
+
+<ParamField query="level5UnitCode" type="string">
+  Filter by Level 5 unit code (case-insensitive partial match)
+</ParamField>
+
+<ParamField query="sectionKey" type="string">
+  Filter by section key (case-insensitive partial match)
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search across level5UnitCode, sectionKey, campaignCode, and campaignName
+</ParamField>
+
+<ParamField query="page" type="number" default="1">
+  Page number for pagination
+</ParamField>
+
+<ParamField query="limit" type="number" default="25">
+  Number of items per page
+</ParamField>
+
+<ParamField query="sortBy" type="string" default="observedAt">
+  Field to sort by: `observedAt`, `createdAt`
+</ParamField>
+
+<ParamField query="sortOrder" type="string" default="desc">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of observation objects
+  
+  <ResponseField name="id" type="string">
+    Unique observation identifier
+  </ResponseField>
+  
+  <ResponseField name="campaignId" type="string">
+    Associated campaign ID
+  </ResponseField>
+  
+  <ResponseField name="level5UnitCode" type="string">
+    Level 5 unit code (e.g., plot or sample unit identifier)
+  </ResponseField>
+  
+  <ResponseField name="sectionKey" type="string">
+    Section key for grouping observations
+  </ResponseField>
+  
+  <ResponseField name="observedAt" type="string">
+    Observation timestamp (ISO 8601 format)
+  </ResponseField>
+  
+  <ResponseField name="payload" type="object">
+    Protocol-specific measurement data (JSON object)
+  </ResponseField>
+  
+  <ResponseField name="campaign" type="object">
+    Campaign details
+    
+    <ResponseField name="campaignCode" type="string">
+      Campaign code
+    </ResponseField>
+    
+    <ResponseField name="campaignName" type="string">
+      Campaign name
+    </ResponseField>
+    
+    <ResponseField name="domain" type="string">
+      Campaign domain
+    </ResponseField>
+    
+    <ResponseField name="protocolType" type="string">
+      Protocol type
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata
+</ResponseField>
+
+<ResponseExample>
+```json
+{
+  "items": [
+    {
+      "id": "obs_abc123",
+      "campaignId": "clx1234567890abcdef",
+      "level5UnitCode": "PLOT_001",
+      "sectionKey": "SECTOR_A",
+      "observedAt": "2024-03-15T14:30:00.000Z",
+      "payload": {
+        "lineId": 1,
+        "sampleUnitId": 1,
+        "spacingL1": 3.0,
+        "spacingL2": 3.0,
+        "liveNormal": 95,
+        "liveAtipic": 2,
+        "liveDrought": 1,
+        "livePest": 0,
+        "deadPest": 0,
+        "deadDrought": 1,
+        "deadMech": 0,
+        "missingCount": 1,
+        "avgHeight": 2.5
+      },
+      "createdAt": "2024-03-15T15:00:00.000Z",
+      "campaign": {
+        "id": "clx1234567890abcdef",
+        "campaignCode": "BIO_SOBREV_2024_Q1",
+        "campaignName": "Survival Campaign Q1 2024",
+        "domain": "BIO",
+        "protocolType": "BIO_SOBREVIVENCIA"
+      }
+    }
+  ],
+  "pagination": {
+    "total": 150,
+    "page": 1,
+    "limit": 25,
+    "totalPages": 6
+  }
+}
+```
+</ResponseExample>
+
+---
+
+## Create Observation
+
+<RequestExample>
+```bash POST /api/assets/measurement-observations
+curl -X POST "https://api.smyeg.com/api/assets/measurement-observations" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "campaignId": "clx1234567890abcdef",
+    "level5UnitCode": "PLOT_002",
+    "sectionKey": "SECTOR_B",
+    "observedAt": "2024-03-16T10:15:00.000Z",
+    "payload": {
+      "lineId": 2,
+      "sampleUnitId": 1,
+      "spacingL1": 3.0,
+      "spacingL2": 3.0,
+      "liveNormal": 92,
+      "liveAtipic": 3,
+      "liveDrought": 2,
+      "livePest": 1,
+      "deadPest": 1,
+      "deadDrought": 0,
+      "deadMech": 0,
+      "missingCount": 1,
+      "avgHeight": 2.3
+    }
+  }'
+```
+</RequestExample>
+
+Create a new measurement observation.
+
+### Request Body
+
+<ParamField body="campaignId" type="string" required>
+  ID of the campaign this observation belongs to
+</ParamField>
+
+<ParamField body="level5UnitCode" type="string" required>
+  Level 5 unit code identifying the plot or sample unit
+</ParamField>
+
+<ParamField body="sectionKey" type="string">
+  Optional section key for grouping observations
+</ParamField>
+
+<ParamField body="observedAt" type="string" required>
+  Observation timestamp in ISO 8601 format
+</ParamField>
+
+<ParamField body="payload" type="object" required>
+  Protocol-specific measurement data. The structure depends on the campaign's protocol type.
+</ParamField>
+
+### Protocol-Specific Payload Examples
+
+#### BIO_SOBREVIVENCIA (Biological Survival)
+
+```json
+{
+  "lineId": 1,
+  "sampleUnitId": 1,
+  "spacingL1": 3.0,
+  "spacingL2": 3.0,
+  "liveNormal": 95,
+  "liveAtipic": 2,
+  "liveDrought": 1,
+  "livePest": 0,
+  "deadPest": 0,
+  "deadDrought": 1,
+  "deadMech": 0,
+  "missingCount": 1,
+  "avgHeight": 2.5
+}
+```
+
+Validation rules:
+- `lineId` and `sampleUnitId` must be positive integers
+- `spacingL1` and `spacingL2` must be positive numbers
+- All count fields must be non-negative
+- `liveNormal + liveAtipic + liveDrought + livePest + deadPest + deadDrought + deadMech + missingCount` must equal `100 / (spacingL1 * spacingL2)` (±1 tolerance)
+
+#### HIDRO_ESTACION_HIDROLOGICA (Hydrological Station)
+
+```json
+{
+  "flowM3s": 12.5,
+  "waterLevelM": 3.2,
+  "sensorStatus": "OK",
+  "measurementDateTime": "2024-03-15T08:00:00.000Z"
+}
+```
+
+#### DENDRO_PARCELA_CARBONO (Carbon Plot)
+
+```json
+{
+  "sampleAreaHa": 0.1,
+  "aboveBiomassT": 15.2,
+  "belowBiomassT": 3.8,
+  "litterBiomassT": 1.2
+}
+```
+
+### Response
+
+Returns the created observation object with a 201 status code.
+
+<ResponseExample>
+```json
+{
+  "id": "obs_xyz789",
+  "campaignId": "clx1234567890abcdef",
+  "level5UnitCode": "PLOT_002",
+  "sectionKey": "SECTOR_B",
+  "observedAt": "2024-03-16T10:15:00.000Z",
+  "payload": {
+    "lineId": 2,
+    "sampleUnitId": 1,
+    "spacingL1": 3.0,
+    "spacingL2": 3.0,
+    "liveNormal": 92,
+    "liveAtipic": 3,
+    "liveDrought": 2,
+    "livePest": 1,
+    "deadPest": 1,
+    "deadDrought": 0,
+    "deadMech": 0,
+    "missingCount": 1,
+    "avgHeight": 2.3
+  },
+  "createdAt": "2024-03-16T10:20:00.000Z"
+}
+```
+</ResponseExample>
+
+---
+
+## Update Observation
+
+<RequestExample>
+```bash PATCH /api/assets/measurement-observations
+curl -X PATCH "https://api.smyeg.com/api/assets/measurement-observations" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "obs_xyz789",
+    "payload": {
+      "lineId": 2,
+      "sampleUnitId": 1,
+      "spacingL1": 3.0,
+      "spacingL2": 3.0,
+      "liveNormal": 93,
+      "liveAtipic": 3,
+      "liveDrought": 1,
+      "livePest": 1,
+      "deadPest": 1,
+      "deadDrought": 0,
+      "deadMech": 0,
+      "missingCount": 1,
+      "avgHeight": 2.4
+    }
+  }'
+```
+</RequestExample>
+
+Update an existing observation. Only provided fields will be updated.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Observation ID to update
+</ParamField>
+
+<ParamField body="level5UnitCode" type="string">
+  Updated Level 5 unit code
+</ParamField>
+
+<ParamField body="sectionKey" type="string">
+  Updated section key
+</ParamField>
+
+<ParamField body="observedAt" type="string">
+  Updated observation timestamp
+</ParamField>
+
+<ParamField body="payload" type="object">
+  Updated measurement data (must match protocol validation rules)
+</ParamField>
+
+### Response
+
+Returns the updated observation object.
+
+---
+
+## Delete Observation
+
+<RequestExample>
+```bash DELETE /api/assets/measurement-observations
+curl -X DELETE "https://api.smyeg.com/api/assets/measurement-observations" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "obs_xyz789"
+  }'
+```
+</RequestExample>
+
+Delete a measurement observation.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Observation ID to delete
+</ParamField>
+
+### Response
+
+<ResponseExample>
+```json
+{
+  "id": "obs_xyz789"
+}
+```
+</ResponseExample>
+
+### Error Codes
+
+- `404` - Observation not found
+- `400` - Invalid payload (protocol validation failed)
+- `403` - Insufficient permissions

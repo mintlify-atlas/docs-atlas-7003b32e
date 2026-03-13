@@ -1,0 +1,338 @@
+---
+title: 'Login'
+description: 'Authenticate users and retrieve authorized organizations'
+---
+
+## Overview
+
+The SMyEG authentication system uses a two-step login process:
+
+1. **Organization Options** - Validate credentials and retrieve available organizations
+2. **Session Creation** - Select an organization and create an authenticated session
+
+---
+
+## POST /api/auth/organization-options
+
+Validate user credentials and retrieve the list of organizations the user has access to.
+
+### Request Body
+
+<ParamField body="identifier" type="string" required>
+  User's email address or username
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <ResponseField name="organizations" type="array">
+    List of organizations the user can access
+    <ResponseField name="id" type="string">
+      Organization unique identifier
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Organization name
+    </ResponseField>
+    <ResponseField name="logoUrl" type="string | null">
+      URL to the organization's logo image
+    </ResponseField>
+    <ResponseField name="siteTitle" type="string | null">
+      Custom site title for the organization
+    </ResponseField>
+  </ResponseField>
+  <ResponseField name="email" type="string">
+    User's email address
+  </ResponseField>
+</ResponseField>
+
+### Error Codes
+
+| Status Code | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | - | Invalid request data (missing identifier or password) |
+| 401 | - | Invalid credentials |
+| 409 | `USER_NOT_ACTIVE` | User account is not active |
+| 409 | `USER_WITHOUT_ORGANIZATION` | User has no authorized organizations |
+| 423 | `USER_LOCKED` | User is temporarily locked (after 5 failed login attempts, locked for 30 minutes) |
+
+### Security Features
+
+- Passwords are hashed using bcrypt with a cost factor of 12
+- Failed login attempts are tracked and logged
+- Account is automatically locked for 30 minutes after 5 failed attempts
+- All authentication events are recorded in the audit log
+
+### Example Request
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://api.smyeg.com/api/auth/organization-options \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier": "user@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('/api/auth/organization-options', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    identifier: 'user@example.com',
+    password: 'SecurePassword123!',
+  }),
+});
+
+const result = await response.json();
+
+if (result.success) {
+  console.log('Available organizations:', result.data.organizations);
+}
+```
+
+```typescript TypeScript
+interface OrganizationOption {
+  id: string;
+  name: string;
+  logoUrl: string | null;
+  siteTitle: string | null;
+}
+
+interface LoginResponse {
+  success: boolean;
+  data: {
+    organizations: OrganizationOption[];
+    email: string;
+  };
+}
+
+const response = await fetch('/api/auth/organization-options', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    identifier: 'user@example.com',
+    password: 'SecurePassword123!',
+  }),
+});
+
+const result: LoginResponse = await response.json();
+```
+
+</CodeGroup>
+
+### Example Response
+
+```json Success Response
+{
+  "success": true,
+  "data": {
+    "organizations": [
+      {
+        "id": "org_123456",
+        "name": "Acme Corporation",
+        "logoUrl": "https://example.com/logos/acme.png",
+        "siteTitle": "Acme Forest Management"
+      },
+      {
+        "id": "org_789012",
+        "name": "Subsidiary Inc",
+        "logoUrl": null,
+        "siteTitle": null
+      }
+    ],
+    "email": "user@example.com"
+  }
+}
+```
+
+```json Error Response
+{
+  "success": false,
+  "error": "Credenciales inválidas"
+}
+```
+
+---
+
+## POST /api/auth/login-validation
+
+Validate that a user has access to a specific organization before completing authentication.
+
+### Request Body
+
+<ParamField body="identifier" type="string" required>
+  User's email address or username
+</ParamField>
+
+<ParamField body="organizationId" type="string" required>
+  ID of the organization to validate access for
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <ResponseField name="canAttemptLogin" type="boolean">
+    Whether the user can proceed with login for this organization
+  </ResponseField>
+</ResponseField>
+
+### Error Codes
+
+| Status Code | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | - | Invalid request data |
+| 409 | `USER_NOT_IN_ORG` | User does not have access to the selected organization |
+| 409 | `USER_NOT_ACTIVE` | User account is not active |
+
+### Example Request
+
+```bash cURL
+curl -X POST https://api.smyeg.com/api/auth/login-validation \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier": "user@example.com",
+    "organizationId": "org_123456"
+  }'
+```
+
+### Example Response
+
+```json Success
+{
+  "success": true,
+  "data": {
+    "canAttemptLogin": true
+  }
+}
+```
+
+---
+
+## POST /api/auth/[...nextauth]
+
+NextAuth.js endpoint for creating authenticated sessions using the Credentials provider.
+
+### Request Body
+
+<ParamField body="identifier" type="string" required>
+  User's email address or username
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password
+</ParamField>
+
+<ParamField body="organizationId" type="string" required>
+  ID of the organization to authenticate with
+</ParamField>
+
+### Response
+
+The response follows the NextAuth.js session format and includes:
+
+<ResponseField name="user" type="object">
+  <ResponseField name="id" type="string">
+    User's unique identifier
+  </ResponseField>
+  <ResponseField name="email" type="string">
+    User's email address
+  </ResponseField>
+  <ResponseField name="name" type="string">
+    User's display name or full name
+  </ResponseField>
+  <ResponseField name="roles" type="string[]">
+    Array of role identifiers assigned to the user
+  </ResponseField>
+  <ResponseField name="permissions" type="string[]">
+    Array of permission identifiers granted to the user
+  </ResponseField>
+  <ResponseField name="organizationId" type="string">
+    ID of the selected organization
+  </ResponseField>
+  <ResponseField name="organizationName" type="string">
+    Name of the selected organization
+  </ResponseField>
+</ResponseField>
+
+### Authentication Flow
+
+1. Validate required fields (identifier, password, organizationId)
+2. Look up user by email or username (case-insensitive)
+3. Verify user exists and has a password hash
+4. Check user status is ACTIVE
+5. Check if user account is locked (after failed attempts)
+6. Verify password using bcrypt
+7. Retrieve user roles and permissions
+8. Verify user has access to the selected organization
+9. Update user's last login timestamp and reset failed login attempts
+10. Create audit log entry
+11. Return user session data with JWT token
+
+### Organization Access Rules
+
+- **Super Admin**: Can access all active organizations
+- **Organization Users**: Can access organizations where they have active role assignments
+- **Fallback Organization**: Users can access their primary organization if no role assignments exist
+
+<Note>
+  The session strategy uses JWT tokens. Session data is stored in the token and includes user ID, roles, permissions, and organization context.
+</Note>
+
+### Example Usage
+
+```typescript TypeScript - Next.js Client
+import { signIn } from 'next-auth/react';
+
+const handleLogin = async () => {
+  const result = await signIn('credentials', {
+    identifier: 'user@example.com',
+    password: 'SecurePassword123!',
+    organizationId: 'org_123456',
+    redirect: false,
+  });
+
+  if (result?.error) {
+    console.error('Login failed:', result.error);
+  } else {
+    console.log('Login successful');
+  }
+};
+```
+
+```typescript TypeScript - Server Component
+import { auth } from '@/lib/auth';
+
+export default async function ProtectedPage() {
+  const session = await auth();
+  
+  if (!session?.user) {
+    redirect('/login');
+  }
+
+  return (
+    <div>
+      <h1>Welcome {session.user.name}</h1>
+      <p>Organization: {session.user.organizationName}</p>
+      <p>Roles: {session.user.roles.join(', ')}</p>
+    </div>
+  );
+}
+```

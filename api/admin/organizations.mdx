@@ -1,0 +1,288 @@
+---
+title: 'Organization Management'
+description: 'API endpoints for managing organizations in the SMyEG system'
+---
+
+## Authentication
+
+All organization management endpoints require authentication. Users must have one of the following:
+- `ADMIN` or `SUPER_ADMIN` role
+- Explicit `organizations:READ`, `organizations:CREATE`, `organizations:UPDATE`, or `organizations:DELETE` permissions
+
+### Permission Scope
+
+- **SUPER_ADMIN**: Can manage all organizations
+- **ADMIN** (scoped): Can only view and edit their own organization
+- **Regular users**: Require explicit permissions for organization operations
+
+## List Organizations
+
+<RequestExample>
+```bash
+GET /api/organizations
+```
+</RequestExample>
+
+Retrieves all active organizations.
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of organization objects
+  
+  <ResponseField name="id" type="string">
+    Organization ID
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Organization name
+  </ResponseField>
+  
+  <ResponseField name="rif" type="string">
+    Organization RIF (tax identification number)
+  </ResponseField>
+  
+  <ResponseField name="countryId" type="string">
+    Associated country ID
+  </ResponseField>
+  
+  <ResponseField name="createdAt" type="string">
+    ISO 8601 timestamp of creation
+  </ResponseField>
+</ResponseField>
+
+### Notes
+
+- Only returns organizations where `deletedAt` is null
+- Scoped ADMIN users only see their own organization
+- SUPER_ADMIN users see all organizations
+- Results are ordered by creation date (newest first)
+
+## Create Organization
+
+<RequestExample>
+```bash
+POST /api/organizations
+```
+</RequestExample>
+
+Creates a new organization.
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  Organization name (must be unique)
+</ParamField>
+
+<ParamField body="rif" type="string">
+  Organization RIF (tax identification number)
+</ParamField>
+
+<ParamField body="countryId" type="string">
+  Country ID to associate with the organization
+</ParamField>
+
+### Response
+
+Returns the created organization object with status code `201`.
+
+<ResponseField name="id" type="string">
+  Generated organization ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Organization name
+</ResponseField>
+
+<ResponseField name="rif" type="string">
+  Organization RIF
+</ResponseField>
+
+<ResponseField name="countryId" type="string">
+  Associated country ID
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of creation
+</ResponseField>
+
+### Notes
+
+- Scoped ADMIN users cannot create organizations (403 error)
+- Organization slug is automatically generated from the name
+- Organization name must be unique (checked via slug)
+- RIF is stored in the `settings` JSONB field
+
+## Update Organization
+
+<RequestExample>
+```bash
+PATCH /api/organizations/{id}
+```
+</RequestExample>
+
+Updates an existing organization's information.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Organization ID
+</ParamField>
+
+### Request Body
+
+All fields are optional. Only provided fields will be updated.
+
+<ParamField body="name" type="string">
+  Updated organization name
+</ParamField>
+
+<ParamField body="rif" type="string">
+  Updated RIF number
+</ParamField>
+
+<ParamField body="countryId" type="string">
+  Updated country ID (can be null)
+</ParamField>
+
+### Response
+
+Returns the updated organization object.
+
+<ResponseField name="id" type="string">
+  Organization ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Updated organization name
+</ResponseField>
+
+<ResponseField name="rif" type="string">
+  Updated RIF
+</ResponseField>
+
+<ResponseField name="countryId" type="string">
+  Updated country ID
+</ResponseField>
+
+### Notes
+
+- Scoped ADMIN users can only update their own organization
+- Attempting to update another organization returns 403 error for scoped admins
+- Validation errors return 400 status
+- Update failures return 500 status
+
+## Delete Organization
+
+<RequestExample>
+```bash
+DELETE /api/organizations/{id}
+```
+</RequestExample>
+
+Performs a soft delete on an organization.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Organization ID
+</ParamField>
+
+### Response
+
+Returns a success message.
+
+<ResponseField name="message" type="string">
+  Confirmation message
+</ResponseField>
+
+### Notes
+
+- This is a soft delete operation - sets `deletedAt` timestamp
+- Scoped ADMIN users cannot delete organizations (403 error)
+- Only SUPER_ADMIN or users with explicit `organizations:DELETE` permission can delete
+- Deletion failures return 500 status
+
+## Restore Organization
+
+<RequestExample>
+```bash
+POST /api/organizations/{id}/restore
+```
+</RequestExample>
+
+Restores a soft-deleted organization.
+
+<Info>
+Check the source code at `/src/app/api/organizations/[id]/restore/route.ts` for implementation details.
+</Info>
+
+## Update Organization Branding
+
+<RequestExample>
+```bash
+PATCH /api/organizations/{id}/branding
+```
+</RequestExample>
+
+Updates organization branding settings (colors, logos, etc.).
+
+<Info>
+Check the source code at `/src/app/api/organizations/[id]/branding/route.ts` for implementation details.
+</Info>
+
+## Get Public Organizations
+
+<RequestExample>
+```bash
+GET /api/organizations/public
+```
+</RequestExample>
+
+Retrieves publicly visible organization information.
+
+<Info>
+Check the source code at `/src/app/api/organizations/public/route.ts` for implementation details. This endpoint may not require authentication.
+</Info>
+
+## Upload Organization Logo
+
+<RequestExample>
+```bash
+POST /api/organizations/logo
+```
+</RequestExample>
+
+Uploads or updates an organization's logo.
+
+<Info>
+Check the source code at `/src/app/api/organizations/logo/route.ts` for implementation details. This likely accepts multipart/form-data with an image file.
+</Info>
+
+## Import Organizations
+
+<RequestExample>
+```bash
+POST /api/organizations/import
+```
+</RequestExample>
+
+Bulk imports organizations from a file.
+
+<Info>
+Check the source code at `/src/app/api/organizations/import/route.ts` for implementation details.
+</Info>
+
+## Export Organizations
+
+<RequestExample>
+```bash
+GET /api/organizations/export
+```
+</RequestExample>
+
+Exports organizations to CSV or XLSX format.
+
+<Info>
+Check the source code at `/src/app/api/organizations/export/route.ts` for implementation details.
+</Info>

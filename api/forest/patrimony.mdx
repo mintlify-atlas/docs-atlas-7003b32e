@@ -1,0 +1,445 @@
+---
+title: Forest Patrimony
+description: Create, update, list, and delete forest patrimony records across hierarchy levels (Nivel 2-5)
+---
+
+## Overview
+
+The Forest Patrimony API manages the hierarchical structure of forest assets across four levels:
+
+- **Nivel 2**: Properties (FINCA, PREDIO, HATO, FUNDO, HACIENDA, ABRAE)
+- **Nivel 3**: Compartments (COMPARTIMIENTO, BLOCK, SECCION, LOTE, ZONA, BLOQUE, ZONIFICACION)
+- **Nivel 4**: Management units (RODAL, PARCELA, ENUMERATION, UNIDAD_DE_MANEJO, CONUCO, OTRO_USO)
+- **Nivel 5**: Plot references (REFERENCIA, SUBUNIDAD, SUBPARCELA, MUESTRA, SUBMUESTRA)
+
+All endpoints require authentication and appropriate permissions (`forest-patrimony:READ`, `forest-patrimony:CREATE`, `forest-patrimony:UPDATE`, `forest-patrimony:DELETE`).
+
+## List Patrimony Records
+
+<CodeGroup>
+```bash GET /api/forest/patrimony
+curl -X GET "https://api.smyeg.com/api/forest/patrimony?level=2&page=1&limit=25" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="level" type="string" required>
+  Hierarchy level to query: `"2"`, `"3"`, `"4"`, or `"5"`
+</ParamField>
+
+<ParamField query="page" type="number" default="1">
+  Page number for pagination
+</ParamField>
+
+<ParamField query="limit" type="number" default="25">
+  Number of items per page (max 100)
+</ParamField>
+
+<ParamField query="parentId" type="string">
+  Filter by parent ID (e.g., level2Id for level 3 records)
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search by code or name (case-insensitive)
+</ParamField>
+
+<ParamField query="orgId" type="string">
+  Filter by organization ID (SUPER_ADMIN only)
+</ParamField>
+
+<ParamField query="scopeOrg" type="boolean">
+  Scope results to user's organization
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of patrimony records for the requested level
+  
+  <ResponseField name="id" type="string">
+    Unique identifier (UUID)
+  </ResponseField>
+  
+  <ResponseField name="code" type="string">
+    Patrimony code (max 80 characters)
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Patrimony name (max 255 characters)
+  </ResponseField>
+  
+  <ResponseField name="type" type="string">
+    Type classification specific to the level
+  </ResponseField>
+  
+  <ResponseField name="isActive" type="boolean">
+    Whether the record is active
+  </ResponseField>
+  
+  <ResponseField name="createdAt" type="string">
+    ISO 8601 timestamp
+  </ResponseField>
+  
+  <ResponseField name="updatedAt" type="string">
+    ISO 8601 timestamp
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  <ResponseField name="total" type="number">
+    Total number of records
+  </ResponseField>
+  
+  <ResponseField name="page" type="number">
+    Current page
+  </ResponseField>
+  
+  <ResponseField name="limit" type="number">
+    Items per page
+  </ResponseField>
+  
+  <ResponseField name="totalPages" type="number">
+    Total number of pages
+  </ResponseField>
+</ResponseField>
+
+<ResponseExample>
+```json
+{
+  "items": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "code": "N2-001",
+      "name": "Finca El Paraíso",
+      "type": "FINCA",
+      "legalStatus": "ADQUISICION",
+      "totalAreaHa": 1500.5,
+      "centroidLatitude": 10.5,
+      "centroidLongitude": -66.9,
+      "isActive": true,
+      "createdAt": "2024-01-15T10:30:00Z",
+      "updatedAt": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "pagination": {
+    "total": 45,
+    "page": 1,
+    "limit": 25,
+    "totalPages": 2
+  }
+}
+```
+</ResponseExample>
+
+## Create Patrimony Record
+
+<CodeGroup>
+```bash POST /api/forest/patrimony
+curl -X POST "https://api.smyeg.com/api/forest/patrimony" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "level": "2",
+    "data": {
+      "code": "N2-001",
+      "name": "Finca El Paraíso",
+      "type": "FINCA",
+      "totalAreaHa": 1500.5,
+      "legalStatus": "ADQUISICION",
+      "isActive": true
+    }
+  }'
+```
+</CodeGroup>
+
+### Request Body
+
+<ParamField body="level" type="string" required>
+  Hierarchy level: `"2"`, `"3"`, `"4"`, or `"5"`
+</ParamField>
+
+<ParamField body="data" type="object" required>
+  Level-specific data object
+</ParamField>
+
+#### Nivel 2 (Property) Fields
+
+<ParamField body="data.code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="data.name" type="string" required>
+  Property name (2-255 characters)
+</ParamField>
+
+<ParamField body="data.type" type="enum" required>
+  Type: `FINCA`, `PREDIO`, `HATO`, `FUNDO`, `HACIENDA`, `ABRAE`
+</ParamField>
+
+<ParamField body="data.legalStatus" type="enum">
+  Legal status: `ADQUISICION`, `ARRIENDO`, `USUFRUCTO`, `COMODATO`, `DECRETO`
+</ParamField>
+
+<ParamField body="data.totalAreaHa" type="number" required>
+  Total area in hectares (non-negative)
+</ParamField>
+
+<ParamField body="data.centroidLatitude" type="number">
+  Latitude (-90 to 90)
+</ParamField>
+
+<ParamField body="data.centroidLongitude" type="number">
+  Longitude (-180 to 180)
+</ParamField>
+
+<ParamField body="data.ownerRepresentative" type="string">
+  Owner or representative name (max 255 characters)
+</ParamField>
+
+<ParamField body="data.publicRegistryNumber" type="string">
+  Public registry number (max 120 characters)
+</ParamField>
+
+<ParamField body="data.publicRegistryDate" type="string">
+  Date in ISO 8601 format
+</ParamField>
+
+<ParamField body="data.address" type="string">
+  Property address (max 2000 characters)
+</ParamField>
+
+<ParamField body="data.isActive" type="boolean" default="true">
+  Whether the record is active
+</ParamField>
+
+#### Nivel 3 (Compartment) Fields
+
+<ParamField body="data.level2Id" type="string" required>
+  Parent Nivel 2 UUID
+</ParamField>
+
+<ParamField body="data.code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="data.name" type="string" required>
+  Compartment name (2-255 characters)
+</ParamField>
+
+<ParamField body="data.type" type="enum" required>
+  Type: `COMPARTIMIENTO`, `BLOCK`, `SECCION`, `LOTE`, `ZONA`, `BLOQUE`, `ZONIFICACION`
+</ParamField>
+
+<ParamField body="data.totalAreaHa" type="number" required>
+  Total area in hectares
+</ParamField>
+
+#### Nivel 4 (Management Unit) Fields
+
+<ParamField body="data.level3Id" type="string" required>
+  Parent Nivel 3 UUID
+</ParamField>
+
+<ParamField body="data.code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="data.name" type="string" required>
+  Unit name (2-255 characters)
+</ParamField>
+
+<ParamField body="data.type" type="enum" required>
+  Type: `RODAL`, `PARCELA`, `ENUMERATION`, `UNIDAD_DE_MANEJO`, `CONUCO`, `OTRO_USO`
+</ParamField>
+
+<ParamField body="data.fscCertificateStatus" type="enum" required>
+  FSC certificate status: `SI` or `NO`
+</ParamField>
+
+<ParamField body="data.currentLandUseName" type="string">
+  Current land use (max 255 characters)
+</ParamField>
+
+<ParamField body="data.previousLandUseName" type="string">
+  Previous land use (max 255 characters)
+</ParamField>
+
+<ParamField body="data.totalAreaHa" type="number" required>
+  Total area in hectares
+</ParamField>
+
+<ParamField body="data.plantableAreaHa" type="number">
+  Plantable area in hectares
+</ParamField>
+
+#### Nivel 5 (Plot) Fields
+
+<ParamField body="data.level4Id" type="string" required>
+  Parent Nivel 4 UUID
+</ParamField>
+
+<ParamField body="data.code" type="string" required>
+  Unique code (1-80 characters)
+</ParamField>
+
+<ParamField body="data.name" type="string" required>
+  Plot name (2-255 characters)
+</ParamField>
+
+<ParamField body="data.type" type="enum" required>
+  Type: `REFERENCIA`, `SUBUNIDAD`, `SUBPARCELA`, `MUESTRA`, `SUBMUESTRA`
+</ParamField>
+
+<ParamField body="data.shapeType" type="enum" required>
+  Shape: `RECTANGULAR`, `CUADRADA`, `CIRCULAR`, `HEXAGONAL`
+</ParamField>
+
+<ParamField body="data.dimension1M" type="number">
+  First dimension in meters (used for area calculation)
+</ParamField>
+
+<ParamField body="data.dimension2M" type="number">
+  Second dimension in meters
+</ParamField>
+
+### Response
+
+Returns the created patrimony record with HTTP status `201 Created`.
+
+<ResponseExample>
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "code": "N2-001",
+  "name": "Finca El Paraíso",
+  "type": "FINCA",
+  "legalStatus": "ADQUISICION",
+  "totalAreaHa": 1500.5,
+  "isActive": true,
+  "organizationId": "org-uuid",
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-01-15T10:30:00Z"
+}
+```
+</ResponseExample>
+
+## Update Patrimony Record
+
+<CodeGroup>
+```bash PATCH /api/forest/patrimony
+curl -X PATCH "https://api.smyeg.com/api/forest/patrimony" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "level": "2",
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "data": {
+      "name": "Finca El Nuevo Paraíso",
+      "totalAreaHa": 1550.0
+    }
+  }'
+```
+</CodeGroup>
+
+### Request Body
+
+<ParamField body="level" type="string" required>
+  Hierarchy level: `"2"`, `"3"`, `"4"`, or `"5"`
+</ParamField>
+
+<ParamField body="id" type="string" required>
+  UUID of the record to update
+</ParamField>
+
+<ParamField body="data" type="object" required>
+  Partial update object (all fields optional, at least one required)
+</ParamField>
+
+### Special Behavior
+
+- **Nivel 4**: Updating `isActive` triggers geometry updates in `forest_geometry_n4` table
+- **Nivel 5**: Area is automatically recalculated when shape or dimensions change
+- **Nivel 4**: Enqueues background recalculation job after update
+
+### Response
+
+Returns the updated patrimony record.
+
+## Delete Patrimony Record
+
+<CodeGroup>
+```bash DELETE /api/forest/patrimony
+curl -X DELETE "https://api.smyeg.com/api/forest/patrimony" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "level": "2",
+    "id": "123e4567-e89b-12d3-a456-426614174000"
+  }'
+```
+</CodeGroup>
+
+### Request Body
+
+<ParamField body="level" type="string" required>
+  Hierarchy level: `"2"`, `"3"`, `"4"`, or `"5"`
+</ParamField>
+
+<ParamField body="id" type="string" required>
+  UUID of the record to delete
+</ParamField>
+
+### Cascade Protection
+
+- **Nivel 2**: Cannot delete if Nivel 3 children exist
+- **Nivel 3**: Cannot delete if Nivel 4 children exist
+- **Nivel 4**: Cannot delete if Nivel 5 children exist; also deletes related geometry
+- **Nivel 5**: Can delete freely
+
+### Response
+
+<ResponseExample>
+```json
+{
+  "message": "Nivel 2 eliminado"
+}
+```
+</ResponseExample>
+
+## Error Responses
+
+<ResponseField name="error" type="string">
+  Error message in Spanish
+</ResponseField>
+
+<ResponseField name="statusCode" type="number">
+  HTTP status code
+</ResponseField>
+
+<ResponseField name="details" type="object">
+  Additional error details (validation errors, etc.)
+</ResponseField>
+
+### Common Errors
+
+- `400`: Invalid parameters or data
+- `403`: Insufficient permissions or organization mismatch
+- `404`: Record not found
+- `409`: Duplicate code or cascade constraint violation
+
+<ResponseExample>
+```json
+{
+  "error": "Ya existe un registro con ese código",
+  "statusCode": 409
+}
+```
+</ResponseExample>
+
+## Implementation Reference
+
+Source: `src/app/api/forest/patrimony/route.ts:1`
+
+Validation schemas: `src/validations/forest-patrimony.schema.ts:1`

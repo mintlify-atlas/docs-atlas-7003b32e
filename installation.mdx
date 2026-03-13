@@ -1,0 +1,675 @@
+---
+title: Installation
+description: Detailed installation guide for SMyEG - development and production setups
+---
+
+# Installation Guide
+
+This guide covers detailed installation procedures for SMyEG, including prerequisites, environment configuration, database setup, and deployment options for both development and production environments.
+
+## Prerequisites
+
+### Required Software
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    **Version 20.x or higher**
+    
+    Download from [nodejs.org](https://nodejs.org/)
+    
+    Verify installation:
+    ```bash
+    node --version
+    ```
+  </Card>
+
+  <Card title="PostgreSQL" icon="database">
+    **Version 15.x or higher**
+    
+    Required for data persistence and geospatial operations.
+    
+    Can be installed via Docker or natively.
+  </Card>
+
+  <Card title="Redis" icon="memory">
+    **Version 7.x or higher**
+    
+    Used for caching and session management.
+    
+    Can be installed via Docker or natively.
+  </Card>
+
+  <Card title="Docker (Optional)" icon="docker">
+    **Recommended for development**
+    
+    Simplifies PostgreSQL and Redis setup.
+    
+    Download from [docker.com](https://www.docker.com/get-started)
+  </Card>
+</CardGroup>
+
+### System Requirements
+
+| Component | Development | Production |
+|-----------|-------------|------------|
+| RAM | 4 GB minimum | 8 GB+ recommended |
+| Storage | 10 GB | 50 GB+ (depends on data) |
+| CPU | 2 cores | 4+ cores recommended |
+| OS | Linux, macOS, Windows | Linux recommended |
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="Docker (Recommended)">
+    ### Using Docker for Database Services
+
+    This is the recommended approach for development as it minimizes setup complexity.
+
+    <Steps>
+      <Step title="Install Docker">
+        Download and install Docker Desktop from [docker.com](https://www.docker.com/get-started)
+        
+        Verify installation:
+        ```bash
+        docker --version
+        docker compose version
+        ```
+      </Step>
+
+      <Step title="Review Docker Compose configuration">
+        The project includes a `docker-compose.yml` file:
+        
+        ```yaml docker-compose.yml
+        services:
+          postgres:
+            image: postgres:15-alpine
+            environment:
+              POSTGRES_USER: postgres
+              POSTGRES_PASSWORD: postgres
+              POSTGRES_DB: app_dev
+            ports:
+              - "5432:5432"
+            volumes:
+              - pgdata:/var/lib/postgresql/data
+        
+          redis:
+            image: redis:7-alpine
+            command: redis-server --appendonly yes
+            ports:
+              - "6379:6379"
+            volumes:
+              - redisdata:/data
+        
+        volumes:
+          pgdata:
+          redisdata:
+        ```
+      </Step>
+
+      <Step title="Start services">
+        ```bash
+        docker compose up -d
+        ```
+        
+        This starts PostgreSQL and Redis in the background.
+      </Step>
+
+      <Step title="Verify services">
+        ```bash
+        docker compose ps
+        ```
+        
+        Both services should show as "Up" or "running".
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Native Installation">
+    ### Installing PostgreSQL and Redis Natively
+
+    <Steps>
+      <Step title="Install PostgreSQL">
+        <Tabs>
+          <Tab title="Ubuntu/Debian">
+            ```bash
+            sudo apt update
+            sudo apt install postgresql-15 postgresql-contrib-15
+            sudo systemctl start postgresql
+            sudo systemctl enable postgresql
+            ```
+          </Tab>
+          <Tab title="macOS">
+            ```bash
+            brew install postgresql@15
+            brew services start postgresql@15
+            ```
+          </Tab>
+          <Tab title="Windows">
+            Download the installer from [postgresql.org](https://www.postgresql.org/download/windows/)
+          </Tab>
+        </Tabs>
+      </Step>
+
+      <Step title="Create database and user">
+        ```bash
+        sudo -u postgres psql
+        ```
+        
+        Then in the PostgreSQL prompt:
+        ```sql
+        CREATE DATABASE app_dev;
+        CREATE USER postgres WITH PASSWORD 'postgres';
+        GRANT ALL PRIVILEGES ON DATABASE app_dev TO postgres;
+        \q
+        ```
+      </Step>
+
+      <Step title="Install Redis">
+        <Tabs>
+          <Tab title="Ubuntu/Debian">
+            ```bash
+            sudo apt update
+            sudo apt install redis-server
+            sudo systemctl start redis-server
+            sudo systemctl enable redis-server
+            ```
+          </Tab>
+          <Tab title="macOS">
+            ```bash
+            brew install redis
+            brew services start redis
+            ```
+          </Tab>
+          <Tab title="Windows">
+            Download from [redis.io](https://redis.io/download) or use WSL2
+          </Tab>
+        </Tabs>
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Application Setup
+
+<Steps>
+  <Step title="Install Node.js dependencies">
+    Navigate to the project directory and install dependencies:
+    
+    ```bash
+    npm install
+    ```
+    
+    Or using pnpm (faster):
+    ```bash
+    npm i -g pnpm
+    pnpm install
+    ```
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create a `.env` file in the project root with the following configuration:
+    
+    ```bash .env
+    # Database Configuration
+    DATABASE_URL="postgresql://postgres:postgres@localhost:5432/app_dev?schema=public"
+    
+    # NextAuth Configuration
+    NEXTAUTH_SECRET="replace-with-secure-random-string"
+    NEXTAUTH_URL="http://localhost:3000"
+    
+    # Redis Configuration (optional but recommended)
+    REDIS_URL="redis://localhost:6379"
+    
+    # Geospatial Worker Configuration (optional)
+    GEO_WORKER_INTERVAL_MS=4000
+    GEO_IMPORT_BATCH_SIZE=5
+    GEO_RECALC_BATCH_SIZE=10
+    
+    # Asset Measurement Worker Configuration (optional)
+    ASSET_MEASUREMENT_WORKER_INTERVAL_MS=5000
+    ASSET_MEASUREMENT_BATCH_SIZE=10
+    ```
+    
+    <Warning>
+      **Important:** Generate a secure `NEXTAUTH_SECRET`:
+      ```bash
+      openssl rand -base64 32
+      ```
+      Never commit this file to version control!
+    </Warning>
+  </Step>
+
+  <Step title="Generate Prisma client">
+    Generate the Prisma client based on your database schema:
+    
+    ```bash
+    npm run db:generate
+    ```
+    
+    This creates the TypeScript types and database client.
+  </Step>
+
+  <Step title="Run database migrations">
+    Apply all database migrations:
+    
+    ```bash
+    npm run db:migrate
+    ```
+    
+    This command:
+    - Creates all database tables and relationships
+    - Sets up PostgreSQL extensions (PostGIS if available)
+    - Creates partitioned tables for audit logs
+    - Applies triggers and constraints
+    
+    <Note>
+      The migration includes automatic partitioning for the `audit_logs` table by month for optimal performance.
+    </Note>
+  </Step>
+
+  <Step title="Seed initial data">
+    Load the initial system data:
+    
+    ```bash
+    npm run db:seed
+    ```
+    
+    This creates:
+    - **Default Organization**: `default-org`
+    - **System Modules**: Authentication, Users, Dashboard, Organizations, Forest Patrimony, etc.
+    - **Permissions**: All CRUD + EXPORT + ADMIN permissions for each module
+    - **Roles**: Super Admin, Admin, Manager, User
+    - **Admin User**: email: `admin@example.com`, password: `Admin1234`
+    - **System Configuration**: Default site name and settings
+  </Step>
+
+  <Step title="Start the application">
+    For development:
+    ```bash
+    npm run dev
+    ```
+    
+    For production:
+    ```bash
+    npm run build
+    npm start
+    ```
+    
+    The application will be available at `http://localhost:3000`
+  </Step>
+</Steps>
+
+## Database Schema Overview
+
+SMyEG uses a comprehensive relational schema with the following key entities:
+
+<AccordionGroup>
+  <Accordion title="Authentication & Users">
+    - **User**: Core user entity with status management
+    - **Organization**: Multi-tenant organization support
+    - **Role**: Hierarchical role definitions
+    - **Permission**: Granular permissions (CREATE, READ, UPDATE, DELETE, EXPORT, ADMIN)
+    - **UserRole**: Many-to-many relationship between users and roles
+    - **RolePermission**: Assigns permissions to roles
+  </Accordion>
+
+  <Accordion title="Modules & Configuration">
+    - **Module**: System module definitions (auth, users, dashboard, etc.)
+    - **SystemConfiguration**: Key-value configuration store (STRING, INTEGER, BOOLEAN, JSON, SECRET)
+    - **NotificationPreference**: User notification settings
+    - **Notification**: In-app notifications with multi-channel support
+  </Accordion>
+
+  <Accordion title="Forest Management">
+    - **PatrimonyLevel1**: Top-level geographic regions
+    - **PatrimonyLevel2**: Properties (finca, predio, hato, etc.)
+    - **PatrimonyLevel3**: Subdivisions (lote, block, zona, etc.)
+    - **PatrimonyLevel4**: Individual plots/rodales with geospatial data
+    - **ForestBiologicalAsset**: Asset tracking with measurements
+    - **AssetMeasurement**: Historical measurements and calculations
+  </Accordion>
+
+  <Accordion title="Audit & Compliance">
+    - **AuditLog**: Partitioned audit trail (by month)
+    - Tracks: CREATE, UPDATE, DELETE, LOGIN, LOGOUT, PASSWORD_RESET, EXPORT, VIEW
+    - Automatic partition creation for optimal query performance
+  </Accordion>
+</AccordionGroup>
+
+## Production Deployment
+
+### Using PM2 (Recommended)
+
+PM2 is a production-grade process manager for Node.js applications.
+
+<Steps>
+  <Step title="Install PM2 globally">
+    ```bash
+    npm install -g pm2
+    ```
+  </Step>
+
+  <Step title="Build the application">
+    ```bash
+    npm run build
+    ```
+  </Step>
+
+  <Step title="Review PM2 configuration">
+    The project includes `ecosystem.config.cjs`:
+    
+    ```javascript ecosystem.config.cjs
+    module.exports = {
+      apps: [
+        {
+          name: 'confor-web',
+          script: 'npm',
+          args: 'start',
+          env: {
+            NODE_ENV: 'production',
+            PORT: 3000
+          }
+        },
+        {
+          name: 'confor-geo-worker',
+          script: 'npm',
+          args: 'run worker:geo',
+          env: {
+            NODE_ENV: 'production'
+          }
+        }
+      ]
+    };
+    ```
+  </Step>
+
+  <Step title="Start with PM2">
+    ```bash
+    pm2 start ecosystem.config.cjs
+    ```
+  </Step>
+
+  <Step title="Monitor and manage">
+    ```bash
+    # View status
+    pm2 status
+    
+    # View logs
+    pm2 logs confor-web
+    pm2 logs confor-geo-worker
+    
+    # Restart
+    pm2 restart confor-web
+    
+    # Stop all
+    pm2 stop all
+    ```
+  </Step>
+
+  <Step title="Enable auto-start on boot">
+    ```bash
+    pm2 startup
+    pm2 save
+    ```
+    
+    Follow the instructions shown by `pm2 startup`.
+  </Step>
+</Steps>
+
+### Environment-Specific Configuration
+
+<CodeGroup>
+```bash Development
+NODE_ENV=development
+NEXTAUTH_URL=http://localhost:3000
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/app_dev
+```
+
+```bash Production
+NODE_ENV=production
+NEXTAUTH_URL=https://yourdomain.com
+DATABASE_URL=postgresql://user:password@db-host:5432/app_prod?schema=public&sslmode=require
+NEXTAUTH_SECRET=<generate-secure-random-string>
+REDIS_URL=redis://redis-host:6379
+```
+</CodeGroup>
+
+## Background Workers
+
+SMyEG includes specialized background workers for asynchronous processing:
+
+### Geospatial Worker
+
+Processes shapefile imports and recalculates spatial data:
+
+```bash
+# Run continuously
+npm run worker:geo
+
+# Run once (for testing)
+npm run worker:geo:once
+```
+
+**Configuration:**
+```bash .env
+GEO_WORKER_INTERVAL_MS=4000        # Polling interval (default: 4000ms)
+GEO_IMPORT_BATCH_SIZE=5            # Max import jobs per cycle (default: 5)
+GEO_RECALC_BATCH_SIZE=10          # Max recalc jobs per cycle (default: 10)
+GEO_WORKER_RUN_ONCE=true          # Run once and exit (for testing)
+```
+
+### Asset Measurement Worker
+
+Processes biological asset measurements:
+
+```bash
+# Run continuously
+npm run worker:assets
+
+# Run once (for testing)
+npm run worker:assets:once
+```
+
+**Configuration:**
+```bash .env
+ASSET_MEASUREMENT_WORKER_INTERVAL_MS=5000
+ASSET_MEASUREMENT_BATCH_SIZE=10
+ASSET_MEASUREMENT_WORKER_RUN_ONCE=true
+```
+
+## Verification Steps
+
+After installation, verify everything is working correctly:
+
+<Steps>
+  <Step title="Check database connection">
+    ```bash
+    npm run db:generate
+    ```
+    
+    Should complete without errors.
+  </Step>
+
+  <Step title="Verify web application">
+    Navigate to `http://localhost:3000/login`
+    
+    You should see the login page.
+  </Step>
+
+  <Step title="Test admin login">
+    Login with:
+    - Email: `admin@example.com`
+    - Password: `Admin1234`
+    
+    You should be redirected to the dashboard.
+  </Step>
+
+  <Step title="Check modules">
+    Verify access to:
+    - Dashboard: `/dashboard`
+    - Users: `/users`
+    - Organizations: `/organizaciones`
+    - Audit: `/audit`
+  </Step>
+
+  <Step title="Test worker (optional)">
+    If using geospatial features:
+    ```bash
+    npm run worker:geo:once
+    ```
+    
+    Should run without errors.
+  </Step>
+</Steps>
+
+## Database Maintenance
+
+### Creating Audit Partitions
+
+The audit log uses monthly partitions. Create future partitions with:
+
+```bash
+npx tsx scripts/create-audit-partition.ts
+```
+
+<Note>
+  Consider setting up a monthly cron job to automatically create the next partition.
+</Note>
+
+### Backup and Restore
+
+<CodeGroup>
+```bash Backup
+# Full database backup
+pg_dump -h localhost -U postgres app_dev > backup.sql
+
+# Compressed backup
+pg_dump -h localhost -U postgres app_dev | gzip > backup.sql.gz
+```
+
+```bash Restore
+# Restore from backup
+psql -h localhost -U postgres app_dev < backup.sql
+
+# Restore from compressed backup
+gunzip -c backup.sql.gz | psql -h localhost -U postgres app_dev
+```
+</CodeGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database connection failed">
+    **Symptoms:** Cannot connect to PostgreSQL
+    
+    **Solutions:**
+    1. Verify PostgreSQL is running:
+       ```bash
+       docker compose ps  # If using Docker
+       sudo systemctl status postgresql  # If native
+       ```
+    2. Check `DATABASE_URL` in `.env`
+    3. Verify PostgreSQL is accepting connections:
+       ```bash
+       psql postgresql://postgres:postgres@localhost:5432/app_dev
+       ```
+  </Accordion>
+
+  <Accordion title="Migration errors">
+    **Symptoms:** Prisma migration fails
+    
+    **Solutions:**
+    1. Reset database (WARNING: deletes all data):
+       ```bash
+       npm run db:push
+       ```
+    2. Check for conflicting migrations:
+       ```bash
+       npx prisma migrate status
+       ```
+    3. Manually resolve conflicts in `prisma/migrations/`
+  </Accordion>
+
+  <Accordion title="NextAuth errors">
+    **Symptoms:** Login not working, session errors
+    
+    **Solutions:**
+    1. Verify `NEXTAUTH_SECRET` is set in `.env`
+    2. Ensure `NEXTAUTH_URL` matches your server URL
+    3. Clear browser cookies and try again
+    4. Check that database is seeded:
+       ```bash
+       npm run db:seed
+       ```
+  </Accordion>
+
+  <Accordion title="Worker not processing jobs">
+    **Symptoms:** Shapefile imports stuck, measurements not calculating
+    
+    **Solutions:**
+    1. Verify worker is running:
+       ```bash
+       pm2 status  # If using PM2
+       ```
+    2. Check worker logs:
+       ```bash
+       pm2 logs confor-geo-worker
+       ```
+    3. Test worker in isolation:
+       ```bash
+       npm run worker:geo:once
+       ```
+    4. Verify database queue tables exist
+  </Accordion>
+
+  <Accordion title="Port conflicts">
+    **Symptoms:** Port already in use
+    
+    **Solutions:**
+    1. Change Next.js port:
+       ```bash
+       PORT=3001 npm run dev
+       ```
+    2. Change database ports in `docker-compose.yml`:
+       ```yaml
+       ports:
+         - "5433:5432"  # PostgreSQL
+         - "6380:6379"  # Redis
+       ```
+       Then update `DATABASE_URL` and `REDIS_URL` in `.env`
+  </Accordion>
+</AccordionGroup>
+
+## Security Checklist
+
+Before deploying to production:
+
+- [ ] Change default admin password
+- [ ] Generate secure `NEXTAUTH_SECRET`
+- [ ] Enable SSL/TLS for database connections
+- [ ] Configure firewall rules
+- [ ] Set up regular database backups
+- [ ] Enable Redis authentication
+- [ ] Review and restrict CORS settings
+- [ ] Enable rate limiting
+- [ ] Set up monitoring and alerting
+- [ ] Review audit log retention policies
+
+## Next Steps
+
+Now that you have SMyEG installed:
+
+<CardGroup cols={2}>
+  <Card title="User Management" icon="users">
+    Create additional users and assign appropriate roles
+  </Card>
+  <Card title="Configure Modules" icon="sliders">
+    Enable and configure modules for your organization
+  </Card>
+  <Card title="Import Data" icon="file-import">
+    Begin importing shapefiles and setting up forest patrimony
+  </Card>
+  <Card title="Monitor Audit Logs" icon="clipboard-list">
+    Review audit trails and set up compliance reports
+  </Card>
+</CardGroup>

@@ -1,0 +1,321 @@
+---
+title: Geo Import
+description: Upload shapefiles, create import jobs, and check processing status for forest geometry data
+---
+
+## Overview
+
+The Geo Import API handles shapefile uploads for forest geometry (Nivel 4 polygons). It supports:
+
+- ZIP upload containing `.shp`, `.shx`, `.dbf`, and `.prj` files
+- Asynchronous background processing via worker
+- Job status tracking and validation
+- Automatic land use variation creation
+
+Requires `forest-patrimony:CREATE`, `forest-patrimony:UPDATE`, or `forest-patrimony:READ` permission.
+
+## Upload Shapefile
+
+<CodeGroup>
+```bash POST /api/forest/geo/import
+curl -X POST "https://api.smyeg.com/api/forest/geo/import" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@nivel4_polygons.zip" \
+  -F "variationDate=2024-01-15" \
+  -F "variationNotes=Actualización masiva GIS"
+```
+
+```javascript JavaScript
+const formData = new FormData();
+formData.append('file', shapefileZip);
+formData.append('variationDate', '2024-01-15');
+formData.append('variationNotes', 'Actualización masiva GIS');
+
+const response = await fetch('/api/forest/geo/import', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`
+  },
+  body: formData
+});
+
+const { jobId, status } = await response.json();
+```
+</CodeGroup>
+
+### Request Body (multipart/form-data)
+
+<ParamField body="file" type="file" required>
+  ZIP file containing shapefile components (`.shp`, `.shx`, `.dbf`, `.prj`)
+</ParamField>
+
+<ParamField body="variationDate" type="string">
+  Date for land use variation records (ISO 8601 format: `YYYY-MM-DD`)
+</ParamField>
+
+<ParamField body="variationNotes" type="string">
+  Optional notes to attach to variation records
+</ParamField>
+
+### Shapefile Requirements
+
+The ZIP archive must contain all required components:
+
+- **`.shp`**: Main geometry file (required)
+- **`.shx`**: Shape index file (required)
+- **`.dbf`**: Attribute database (required)
+- **`.prj`**: Projection definition (required)
+
+Optional files (`.cpg`, `.sbn`, `.sbx`, etc.) are allowed but not validated.
+
+### Response
+
+<ResponseField name="jobId" type="string">
+  UUID of the created import job
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Initial job status (always `PENDING`)
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message
+</ResponseField>
+
+<ResponseExample>
+```json HTTP 202 Accepted
+{
+  "jobId": "job-123e4567-e89b-12d3-a456-426614174000",
+  "status": "PENDING",
+  "message": "Archivo recibido. El worker procesará la importación en segundo plano."
+}
+```
+</ResponseExample>
+
+### Processing Flow
+
+1. ZIP file is validated for required components
+2. Job record is created in database with status `PENDING`
+3. File is stored at `public/uploads/geo-imports/{jobId}.zip`
+4. Worker endpoint is triggered asynchronously
+5. Client receives immediate response with `jobId`
+6. Use `GET /api/forest/geo/import/{jobId}` to check status
+
+## Check Job Status
+
+<CodeGroup>
+```bash GET /api/forest/geo/import/{jobId}
+curl -X GET "https://api.smyeg.com/api/forest/geo/import/job-123e4567" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```javascript JavaScript
+const response = await fetch(`/api/forest/geo/import/${jobId}`, {
+  headers: {
+    'Authorization': `Bearer ${token}`
+  }
+});
+
+const job = await response.json();
+console.log(`Status: ${job.status}`);
+```
+</CodeGroup>
+
+### Path Parameters
+
+<ParamField path="jobId" type="string" required>
+  UUID of the import job
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  Job UUID
+</ResponseField>
+
+<ResponseField name="organizationId" type="string">
+  Organization that created the job
+</ResponseField>
+
+<ResponseField name="fileName" type="string">
+  Original uploaded filename
+</ResponseField>
+
+<ResponseField name="storagePath" type="string">
+  Server file path
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Job status: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`
+</ResponseField>
+
+<ResponseField name="createdById" type="string">
+  User UUID who created the job
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Job configuration and defaults
+  
+  <ResponseField name="requiredExtensions" type="array">
+    List of required file extensions
+  </ResponseField>
+  
+  <ResponseField name="variationDefaults" type="object">
+    <ResponseField name="variationDate" type="string">
+      Default date for variations (ISO 8601)
+    </ResponseField>
+    
+    <ResponseField name="variationNotes" type="string">
+      Default notes for variations
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="items" type="array">
+  First 100 import items (features from shapefile)
+  
+  <ResponseField name="featureIndex" type="number">
+    Zero-based index in shapefile
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Item processing status
+  </ResponseField>
+  
+  <ResponseField name="errorMessage" type="string">
+    Error details if failed
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  Job creation timestamp (ISO 8601)
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string">
+  Last update timestamp (ISO 8601)
+</ResponseField>
+
+<ResponseExample>
+```json
+{
+  "id": "job-123e4567-e89b-12d3-a456-426614174000",
+  "organizationId": "org-uuid",
+  "fileName": "nivel4_polygons.zip",
+  "storagePath": "/app/public/uploads/geo-imports/job-123e4567.zip",
+  "status": "PROCESSING",
+  "createdById": "user-uuid",
+  "metadata": {
+    "requiredExtensions": [".shp", ".shx", ".dbf", ".prj"],
+    "variationDefaults": {
+      "variationDate": "2024-01-15T00:00:00.000Z",
+      "variationNotes": "Actualización masiva GIS"
+    }
+  },
+  "items": [
+    {
+      "id": "item-uuid",
+      "jobId": "job-123e4567",
+      "featureIndex": 0,
+      "status": "COMPLETED",
+      "errorMessage": null
+    },
+    {
+      "id": "item-uuid-2",
+      "jobId": "job-123e4567",
+      "featureIndex": 1,
+      "status": "FAILED",
+      "errorMessage": "Nivel 4 no encontrado: N4-999"
+    }
+  ],
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-01-15T10:31:45Z"
+}
+```
+</ResponseExample>
+
+## Download Import Template
+
+<CodeGroup>
+```bash GET /api/forest/geo/import?format=csv
+curl -X GET "https://api.smyeg.com/api/forest/geo/import?format=xlsx" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -o template.xlsx
+```
+</CodeGroup>
+
+### Query Parameters
+
+<ParamField query="format" type="string" default="csv">
+  Template format: `csv` or `xlsx`
+</ParamField>
+
+### Response
+
+Returns a downloadable template file with these columns:
+
+- `nivel2`: Nivel 2 code (e.g., `N2-001`)
+- `nivel3`: Nivel 3 code (e.g., `N3-001`)
+- `nivel4`: Nivel 4 code (e.g., `N4-001`)
+- `usoactual`: Current land use (e.g., `BOSQUE`)
+- `usoanterior`: Previous land use (e.g., `NO BOSQUE`)
+- `fechavariacion`: Variation date (YYYY-MM-DD)
+- `observaciones`: Notes
+
+## Worker Endpoint (Internal)
+
+The worker endpoint (`POST /api/forest/geo/import/worker`) is called automatically after upload. It processes the shapefile and updates job status.
+
+**Security**: Protected by `x-worker-secret` header (env: `GEO_WORKER_SECRET`).
+
+## Error Responses
+
+### Missing Required Files
+
+<ResponseExample>
+```json HTTP 400
+{
+  "error": "ZIP incompleto. Faltan archivos obligatorios: .shp, .prj",
+  "statusCode": 400
+}
+```
+</ResponseExample>
+
+### Invalid Date Format
+
+<ResponseExample>
+```json HTTP 400
+{
+  "error": "La fecha de variación es inválida",
+  "statusCode": 400
+}
+```
+</ResponseExample>
+
+### Job Not Found
+
+<ResponseExample>
+```json HTTP 404
+{
+  "error": "Job no encontrado",
+  "statusCode": 404
+}
+```
+</ResponseExample>
+
+### No Organization Associated
+
+<ResponseExample>
+```json HTTP 403
+{
+  "error": "El usuario no tiene una organización asociada",
+  "statusCode": 403
+}
+```
+</ResponseExample>
+
+## Implementation Reference
+
+Source files:
+- Upload: `src/app/api/forest/geo/import/route.ts:111`
+- Status check: `src/app/api/forest/geo/import/[jobId]/route.ts:22`
+- Worker: `src/app/api/forest/geo/import/worker/route.ts:1`

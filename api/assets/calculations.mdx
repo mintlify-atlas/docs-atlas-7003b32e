@@ -1,0 +1,496 @@
+---
+title: 'Calculation Jobs'
+description: 'API endpoints for managing calculation jobs and retrieving results'
+---
+
+## Overview
+
+Calculation jobs process campaign observations to generate computed metrics and analysis results. Jobs are queued and processed asynchronously by workers. Results are stored as versioned snapshots.
+
+## List Calculation Jobs
+
+<RequestExample>
+```bash GET /api/assets/calculation-jobs
+curl -X GET "https://api.smyeg.com/api/assets/calculation-jobs?campaignId=clx123&status=COMPLETED" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+</RequestExample>
+
+Retrieve a paginated list of calculation jobs.
+
+### Query Parameters
+
+<ParamField query="campaignId" type="string">
+  Filter by campaign ID
+</ParamField>
+
+<ParamField query="domain" type="string">
+  Filter by domain: `BIO`, `DENDRO`, `DEMO`, `HIDRO`
+</ParamField>
+
+<ParamField query="protocolType" type="string">
+  Filter by protocol type
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by job status: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`
+</ParamField>
+
+<ParamField query="page" type="number" default="1">
+  Page number for pagination
+</ParamField>
+
+<ParamField query="limit" type="number" default="25">
+  Number of items per page
+</ParamField>
+
+<ParamField query="sortBy" type="string" default="createdAt">
+  Field to sort by: `createdAt`, `startedAt`, `completedAt`
+</ParamField>
+
+<ParamField query="sortOrder" type="string" default="desc">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of calculation job objects
+  
+  <ResponseField name="id" type="string">
+    Unique job identifier
+  </ResponseField>
+  
+  <ResponseField name="organizationId" type="string">
+    Organization ID
+  </ResponseField>
+  
+  <ResponseField name="campaignId" type="string">
+    Associated campaign ID
+  </ResponseField>
+  
+  <ResponseField name="domain" type="string">
+    Campaign domain
+  </ResponseField>
+  
+  <ResponseField name="protocolType" type="string">
+    Protocol type
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Job status: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`
+  </ResponseField>
+  
+  <ResponseField name="runAfter" type="string">
+    Scheduled execution time (ISO 8601)
+  </ResponseField>
+  
+  <ResponseField name="createdAt" type="string">
+    Job creation timestamp
+  </ResponseField>
+  
+  <ResponseField name="startedAt" type="string">
+    Job start timestamp (null if not started)
+  </ResponseField>
+  
+  <ResponseField name="completedAt" type="string">
+    Job completion timestamp (null if not completed)
+  </ResponseField>
+  
+  <ResponseField name="attempts" type="number">
+    Number of processing attempts
+  </ResponseField>
+  
+  <ResponseField name="errorMessage" type="string">
+    Error message if job failed
+  </ResponseField>
+  
+  <ResponseField name="campaign" type="object">
+    Campaign details
+  </ResponseField>
+</ResponseField>
+
+<ResponseExample>
+```json
+{
+  "items": [
+    {
+      "id": "job_abc123",
+      "organizationId": "org_xyz",
+      "campaignId": "clx1234567890abcdef",
+      "domain": "BIO",
+      "protocolType": "BIO_SOBREVIVENCIA",
+      "status": "COMPLETED",
+      "runAfter": "2024-03-15T16:00:00.000Z",
+      "payload": {},
+      "createdAt": "2024-03-15T15:30:00.000Z",
+      "startedAt": "2024-03-15T16:00:15.000Z",
+      "completedAt": "2024-03-15T16:02:30.000Z",
+      "attempts": 1,
+      "errorMessage": null,
+      "createdById": "user_123",
+      "campaign": {
+        "id": "clx1234567890abcdef",
+        "campaignCode": "BIO_SOBREV_2024_Q1",
+        "campaignName": "Survival Campaign Q1 2024",
+        "domain": "BIO",
+        "protocolType": "BIO_SOBREVIVENCIA"
+      }
+    }
+  ],
+  "pagination": {
+    "total": 8,
+    "page": 1,
+    "limit": 25,
+    "totalPages": 1
+  }
+}
+```
+</ResponseExample>
+
+---
+
+## Enqueue Calculation Job
+
+<RequestExample>
+```bash POST /api/assets/calculation-jobs
+curl -X POST "https://api.smyeg.com/api/assets/calculation-jobs" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "campaignId": "clx1234567890abcdef",
+    "runAfter": "2024-03-20T10:00:00.000Z"
+  }'
+```
+</RequestExample>
+
+Enqueue a new calculation job for a campaign.
+
+### Request Body
+
+<ParamField body="campaignId" type="string" required>
+  ID of the campaign to process
+</ParamField>
+
+<ParamField body="runAfter" type="string">
+  Scheduled execution time (ISO 8601 format). Defaults to immediate execution.
+</ParamField>
+
+<ParamField body="payload" type="object">
+  Optional metadata for the calculation job
+</ParamField>
+
+### Response
+
+Returns the created job object with status `PENDING` and a 201 status code.
+
+<ResponseExample>
+```json
+{
+  "id": "job_new456",
+  "organizationId": "org_xyz",
+  "campaignId": "clx1234567890abcdef",
+  "domain": "BIO",
+  "protocolType": "BIO_SOBREVIVENCIA",
+  "status": "PENDING",
+  "runAfter": "2024-03-20T10:00:00.000Z",
+  "payload": {},
+  "createdAt": "2024-03-20T09:30:00.000Z",
+  "startedAt": null,
+  "completedAt": null,
+  "attempts": 0,
+  "errorMessage": null,
+  "createdById": "user_123"
+}
+```
+</ResponseExample>
+
+---
+
+## Process Calculation Job
+
+<RequestExample>
+```bash POST /api/assets/calculation-jobs/worker
+curl -X POST "https://api.smyeg.com/api/assets/calculation-jobs/worker" \
+  -H "x-worker-secret: YOUR_WORKER_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jobId": "job_new456"
+  }'
+```
+</RequestExample>
+
+Trigger worker to process a specific job or the next pending job. This endpoint is typically called by scheduled workers or internal automation.
+
+### Authentication
+
+This endpoint supports two authentication methods:
+1. Worker secret: Provide `x-worker-secret` header (recommended for workers)
+2. User auth: Standard authorization with `asset-measurement:UPDATE` permission
+
+### Request Body
+
+<ParamField body="jobId" type="string">
+  Specific job ID to process. If omitted, processes the next pending job.
+</ParamField>
+
+### Response
+
+<ResponseField name="processed" type="boolean">
+  Whether a job was processed
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Job result status: `COMPLETED` or `FAILED`
+</ResponseField>
+
+<ResponseField name="campaignId" type="string">
+  Campaign ID that was processed
+</ResponseField>
+
+<ResponseField name="resultKey" type="string">
+  Key identifying the result snapshot
+</ResponseField>
+
+<ResponseField name="resultVersion" type="number">
+  Version number of the generated result
+</ResponseField>
+
+<ResponseField name="observationCount" type="number">
+  Number of observations processed
+</ResponseField>
+
+<ResponseExample>
+```json
+{
+  "processed": true,
+  "status": "COMPLETED",
+  "campaignId": "clx1234567890abcdef",
+  "resultKey": "BIO_SOBREV_2024_Q1_AUTO_SUMMARY",
+  "resultVersion": 2,
+  "observationCount": 150
+}
+```
+</ResponseExample>
+
+### Error Response (No Jobs)
+
+<ResponseExample>
+```json
+{
+  "processed": false,
+  "reason": "no_pending_jobs"
+}
+```
+</ResponseExample>
+
+---
+
+## Get Calculation Results
+
+<RequestExample>
+```bash GET /api/assets/result-snapshots
+curl -X GET "https://api.smyeg.com/api/assets/result-snapshots?campaignId=clx123&isCurrent=true" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+</RequestExample>
+
+Retrieve calculation results stored as versioned snapshots.
+
+### Query Parameters
+
+<ParamField query="campaignId" type="string">
+  Filter by campaign ID
+</ParamField>
+
+<ParamField query="level4Id" type="string">
+  Filter by Level 4 unit ID
+</ParamField>
+
+<ParamField query="domain" type="string">
+  Filter by domain
+</ParamField>
+
+<ParamField query="resultKey" type="string">
+  Filter by result key (partial match)
+</ParamField>
+
+<ParamField query="isCurrent" type="boolean">
+  Filter by current version flag
+</ParamField>
+
+<ParamField query="page" type="number" default="1">
+  Page number
+</ParamField>
+
+<ParamField query="limit" type="number" default="25">
+  Items per page
+</ParamField>
+
+<ParamField query="sortBy" type="string" default="calculatedAt">
+  Sort field: `calculatedAt`, `resultVersion`
+</ParamField>
+
+<ParamField query="sortOrder" type="string" default="desc">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of result snapshot objects
+  
+  <ResponseField name="id" type="string">
+    Unique result snapshot ID
+  </ResponseField>
+  
+  <ResponseField name="campaignId" type="string">
+    Campaign ID
+  </ResponseField>
+  
+  <ResponseField name="resultKey" type="string">
+    Result identifier key
+  </ResponseField>
+  
+  <ResponseField name="resultVersion" type="number">
+    Version number (incremental)
+  </ResponseField>
+  
+  <ResponseField name="schemaVersion" type="string">
+    Result schema version
+  </ResponseField>
+  
+  <ResponseField name="isCurrent" type="boolean">
+    Whether this is the current/active version
+  </ResponseField>
+  
+  <ResponseField name="calculatedAt" type="string">
+    Calculation timestamp
+  </ResponseField>
+  
+  <ResponseField name="resultPayload" type="object">
+    Calculation results and metrics
+    
+    <ResponseField name="summary" type="object">
+      Observation summary statistics
+    </ResponseField>
+    
+    <ResponseField name="metrics" type="object">
+      Protocol-specific calculated metrics
+    </ResponseField>
+    
+    <ResponseField name="quality" type="object">
+      Data quality indicators
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+<ResponseExample>
+```json
+{
+  "items": [
+    {
+      "id": "result_abc123",
+      "campaignId": "clx1234567890abcdef",
+      "level4Id": "level4_xyz789",
+      "domain": "BIO",
+      "resultKey": "BIO_SOBREV_2024_Q1_AUTO_SUMMARY",
+      "resultVersion": 2,
+      "schemaVersion": "1.0",
+      "isCurrent": true,
+      "calculatedAt": "2024-03-15T16:02:30.000Z",
+      "resultPayload": {
+        "summary": {
+          "observationCount": 150,
+          "sectionCount": 5,
+          "level5UnitCount": 30,
+          "observationsBySection": {
+            "SECTOR_A": 45,
+            "SECTOR_B": 38,
+            "SECTOR_C": 40,
+            "SECTOR_D": 27
+          }
+        },
+        "metrics": {
+          "SURVIVAL_REAL_PCT": 92.5,
+          "SURVIVAL_PRESC_PCT": 93.2,
+          "DENSITY_VIVA_HA": 1028,
+          "AVG_HEIGHT_RODAL": 2.45,
+          "SAMPLING_ERROR_PCT": 3.2,
+          "SURVIVAL_SEMAFORO": "VERDE",
+          "SURVIVAL_ACCEPTANCE_STATUS": "ACEPTADO",
+          "BIOLOGICAL_ACCOUNTING_STATUS": "ACTIVO_BIOLOGICO_EN_FORMACION",
+          "NEXT_INVENTORY_PROTOCOL": "BIO_PREOPERATIVO_O_MANEJO",
+          "OPERATIONAL_ACTION": "CONTINUA_MONITOREO_HASTA_SIGUIENTE_INVENTARIO"
+        },
+        "quality": {
+          "validObservationCount": 148,
+          "invalidObservationCount": 2,
+          "totalObservationCount": 150,
+          "zeroLiveObservationCount": 0,
+          "missingHeightCount": 5,
+          "missingHeightPct": 3.38,
+          "avgHeightIsReferential": false,
+          "replantAction": "SIN_REPLANTE"
+        },
+        "protocolType": "BIO_SOBREVIVENCIA",
+        "generatedBy": "asset-measurement-worker",
+        "formulaVersion": "1.0.0"
+      },
+      "campaign": {
+        "id": "clx1234567890abcdef",
+        "campaignCode": "BIO_SOBREV_2024_Q1",
+        "campaignName": "Survival Campaign Q1 2024",
+        "domain": "BIO",
+        "protocolType": "BIO_SOBREVIVENCIA"
+      }
+    }
+  ],
+  "pagination": {
+    "total": 1,
+    "page": 1,
+    "limit": 25,
+    "totalPages": 1
+  }
+}
+```
+</ResponseExample>
+
+---
+
+## Delete Calculation Job
+
+<RequestExample>
+```bash DELETE /api/assets/calculation-jobs
+curl -X DELETE "https://api.smyeg.com/api/assets/calculation-jobs" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "job_abc123"
+  }'
+```
+</RequestExample>
+
+Delete a calculation job. Jobs with status `PROCESSING` cannot be deleted.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Job ID to delete
+</ParamField>
+
+### Response
+
+<ResponseExample>
+```json
+{
+  "id": "job_abc123"
+}
+```
+</ResponseExample>
+
+### Error Codes
+
+- `404` - Job not found
+- `409` - Job is currently processing and cannot be deleted
+- `403` - Insufficient permissions

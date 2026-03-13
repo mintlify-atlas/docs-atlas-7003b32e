@@ -1,0 +1,146 @@
+---
+title: Introduction
+description: Overview of SMyEG - A modern full-stack modular application platform
+---
+
+# Introduction to SMyEG
+
+SMyEG is a comprehensive full-stack modular application platform designed for building enterprise-grade systems with authentication, authorization, user management, and extensive configuration capabilities.
+
+## What is SMyEG?
+
+SMyEG is a production-ready application framework that combines modern web technologies to deliver a scalable, secure, and maintainable platform for building business applications. Built with Next.js, React, and PostgreSQL, it provides a solid foundation for developing complex enterprise solutions.
+
+## Who is SMyEG for?
+
+<CardGroup cols={2}>
+  <Card title="Enterprise Teams" icon="building">
+    Organizations needing a secure, multi-tenant platform with role-based access control and comprehensive audit trails.
+  </Card>
+  <Card title="Development Teams" icon="code">
+    Developers looking for a modern, well-architected starter platform with best practices built-in.
+  </Card>
+  <Card title="Forest Management" icon="tree">
+    Specialized modules for forest patrimony, biological asset management, and geospatial data processing.
+  </Card>
+  <Card title="System Integrators" icon="puzzle-piece">
+    Teams that need a modular architecture to customize and extend for specific business needs.
+  </Card>
+</CardGroup>
+
+## Key Capabilities
+
+### Authentication & Authorization
+- NextAuth v5 integration with credential-based authentication
+- Multi-organization support with tenant isolation
+- Role-based access control (RBAC) with granular permissions
+- Support for multiple authentication providers (Local, Google, GitHub, Microsoft)
+
+### User Management
+- Complete user lifecycle management (active, inactive, pending verification, locked)
+- Flexible role assignment with system and custom roles
+- User profile management and verification workflows
+- Organization-scoped user administration
+
+### Modular Architecture
+SMyEG includes the following pre-built modules:
+
+- **Authentication & Authorization** - Secure login and access control
+- **User Management** - Complete user administration
+- **Dashboard & Metrics** - Analytics and reporting
+- **System Configuration** - Global and organization-specific settings
+- **Audit Logging** - Comprehensive activity tracking with partitioned storage
+- **Forest Patrimony** - Multi-level hierarchical asset management
+- **Biological Asset Management** - Forest asset tracking and measurements
+- **Geospatial Processing** - Shapefile import with automated worker processing
+
+### Advanced Features
+
+<AccordionGroup>
+  <Accordion title="Geospatial Data Processing">
+    - Automated shapefile import and processing
+    - Multi-level hierarchical spatial data (Level 2, 3, 4)
+    - Background worker for asynchronous geometry processing
+    - CRS transformation to EPSG:4326
+    - Polygon validation and area calculations
+  </Accordion>
+
+  <Accordion title="Multi-Organization Support">
+    - Complete tenant isolation at the database level
+    - Organization-specific roles and permissions
+    - Per-organization configuration settings
+    - Secure cross-tenant data protection
+  </Accordion>
+
+  <Accordion title="Audit & Compliance">
+    - Comprehensive audit logging for all actions
+    - Partitioned audit tables for optimal performance
+    - Detailed tracking of CREATE, UPDATE, DELETE, LOGIN, EXPORT, and VIEW actions
+    - User activity monitoring and reporting
+  </Accordion>
+
+  <Accordion title="Background Processing">
+    - Dedicated geospatial worker for shapefile processing
+    - Asset measurement worker for biological asset calculations
+    - Configurable batch sizes and polling intervals
+    - PM2 process management for production deployments
+  </Accordion>
+</AccordionGroup>
+
+## Technology Stack
+
+<CodeGroup>
+```typescript Frontend
+// Built with modern React and Next.js
+Next.js 16 (App Router)
+React 19
+Tailwind CSS 4
+Radix UI Components
+React Hook Form + Zod Validation
+```
+
+```typescript Backend
+// Robust server-side architecture
+Node.js 20+
+NextAuth v5
+Prisma ORM
+PostgreSQL 15
+Redis 7
+```
+
+```typescript Tools & Libraries
+// Specialized capabilities
+@turf/turf - Geospatial operations
+shpjs - Shapefile parsing
+Leaflet - Interactive maps
+Recharts - Data visualization
+@casl/ability - Authorization
+```
+</CodeGroup>
+
+## System Requirements
+
+<Note>
+  SMyEG requires Node.js 20 or higher and uses PostgreSQL 15+ for data storage. Docker is recommended for local development but optional for production deployments.
+</Note>
+
+| Component | Requirement |
+|-----------|-------------|
+| Node.js | 20.x or higher |
+| PostgreSQL | 15.x or higher |
+| Redis | 7.x or higher |
+| Docker | Optional (recommended for dev) |
+| PM2 | Optional (recommended for production) |
+
+## Getting Started
+
+Ready to get started with SMyEG? Continue to the [Quickstart](/quickstart) guide to set up your first instance in minutes, or jump to the detailed [Installation](/installation) guide for production deployment instructions.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes with Docker
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed setup for production environments
+  </Card>
+</CardGroup>

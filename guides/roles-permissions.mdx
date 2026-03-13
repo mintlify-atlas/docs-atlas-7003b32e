@@ -1,0 +1,447 @@
+---
+title: Roles & Permissions
+description: Understanding the role system, permission actions, CASL ability definitions, and creating custom roles
+---
+
+## Overview
+
+SMyEG implements a flexible role-based access control (RBAC) system using a permission matrix that maps roles to module actions. The system supports both system-defined roles and custom organization-specific roles.
+
+## Role System Architecture
+
+### System Roles
+
+From `src/lib/rbac.ts:1-4`, the system defines five built-in roles:
+
+```typescript
+export const APP_ROLES = [
+  'SUPER_ADMIN',
+  'ADMIN', 
+  'CONTADOR',
+  'GERENTE_CAMPO',
+  'USER'
+] as const;
+```
+
+### Role Hierarchy
+
+<Steps>
+  <Step title="SUPER_ADMIN">
+    Full system access across all organizations. Can manage organizations, view all data, and perform any action.
+  </Step>
+  <Step title="ADMIN">
+    Organization-level administrator. Can manage users, configure settings, and access all modules within their organization.
+  </Step>
+  <Step title="GERENTE_CAMPO">
+    Field manager role. Read access to forest patrimony, biological assets, measurements, and users.
+  </Step>
+  <Step title="CONTADOR">
+    Accountant role. Read-only access to forest patrimony data.
+  </Step>
+  <Step title="USER">
+    Basic user. Dashboard read access only.
+  </Step>
+</Steps>
+
+## Permission Actions
+
+### Standard CRUD Actions
+
+The system uses five standard permission actions:
+
+- `CREATE` - Create new records
+- `READ` - View records
+- `UPDATE` - Modify existing records  
+- `DELETE` - Remove records
+- `ADMIN` - Full control (implies all above actions)
+
+### Permission Format
+
+Permissions are stored as strings in the format `module:action`:
+
+```typescript
+// Examples
+'users:READ'
+'forest-patrimony:CREATE'
+'asset-measurement:UPDATE'
+'organizations:ADMIN'
+```
+
+### Checking Permissions
+
+From `src/lib/permissions.ts:36-38`:
+
+```typescript
+export function hasPermission(
+  permissions: string[],
+  moduleSlug: string,
+  action: string
+) {
+  return permissions.includes(`${moduleSlug}:${action}`) ||
+         permissions.includes(`${moduleSlug}:ADMIN`);
+}
+```
+
+<Info>
+The `ADMIN` action on a module grants all other actions (CREATE, READ, UPDATE, DELETE) for that module.
+</Info>
+
+## CASL Ability Definitions
+
+### Integration with CASL
+
+SMyEG uses CASL (pronounced "castle") for declarative permission checks. From `src/lib/ability.ts:1-28`:
+
+```typescript
+import { AbilityBuilder, AbilityClass, PureAbility } from '@casl/ability';
+
+export type AppAction = 'manage' | 'create' | 'read' | 'update' | 'delete';
+export type AppSubject = string;
+export type AppAbility = PureAbility<[AppAction, AppSubject]>;
+
+const actionMap: Record<string, AppAction> = {
+  CREATE: 'create',
+  READ: 'read',
+  UPDATE: 'update',
+  DELETE: 'delete',
+  ADMIN: 'manage',
+};
+```
+
+### Building Abilities from Permissions
+
+```typescript
+export function buildAbilityFromPermissions(permissions: string[]) {
+  const { can, build } = new AbilityBuilder<AppAbility>(
+    PureAbility as AbilityClass<AppAbility>
+  );
+
+  for (const entry of permissions) {
+    const [moduleSlug, actionRaw] = entry.split(':');
+    const action = actionMap[actionRaw] ?? 'read';
+    if (moduleSlug) {
+      can(action, moduleSlug);
+    }
+  }
+
+  return build();
+}
+```
+
+### Using Abilities in Components
+
+```typescript
+import { buildAbilityFromPermissions } from '@/lib/ability';
+
+const ability = buildAbilityFromPermissions(user.permissions);
+
+// Check if user can perform action
+if (ability.can('create', 'users')) {
+  // Show create user button
+}
+
+if (ability.can('manage', 'organizations')) {
+  // Show admin panel
+}
+```
+
+## Role Permissions Matrix
+
+### SUPER_ADMIN Permissions
+
+From `src/lib/rbac.ts:50-52`:
+
+```typescript
+if (role === 'SUPER_ADMIN') {
+  return [
+    'dashboard:READ',
+    'users:ADMIN',
+    'organizations:ADMIN',
+    'forest-patrimony:ADMIN',
+    'forest-biological-asset:ADMIN',
+    'asset-measurement:ADMIN',
+    'forest-config:ADMIN',
+    'general-config:ADMIN',
+    'profile:ADMIN',
+    'analytics:ADMIN',
+    'settings:ADMIN',
+    'audit:ADMIN'
+  ];
+}
+```
+
+### ADMIN Permissions
+
+From `src/lib/rbac.ts:30-47`:
+
+```typescript
+if (role === 'ADMIN') {
+  return [
+    'dashboard:READ',
+    'forest-patrimony:READ',
+    'forest-patrimony:CREATE',
+    'forest-patrimony:UPDATE',
+    'forest-patrimony:DELETE',
+    'forest-biological-asset:READ',
+    'asset-measurement:READ',
+    'asset-measurement:CREATE',
+    'asset-measurement:UPDATE',
+    'settings:READ',
+    'settings:UPDATE',
+    'users:READ',
+    'users:CREATE',
+    'users:UPDATE',
+    'users:DELETE',
+  ];
+}
+```
+
+### Field Roles (GERENTE_CAMPO, CONTADOR)
+
+```typescript
+// GERENTE_CAMPO
+[
+  'forest-patrimony:READ',
+  'forest-biological-asset:READ',
+  'asset-measurement:READ',
+  'users:READ',
+]
+
+// CONTADOR  
+[
+  'forest-patrimony:READ'
+]
+```
+
+## Creating Custom Roles
+
+### Via API
+
+Create a custom role through `POST /api/roles`:
+
+```typescript
+const response = await fetch('/api/roles', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    name: 'Field Technician',
+    slug: 'FIELD_TECH',
+    description: 'Field staff who collect measurement data'
+  })
+});
+```
+
+### Slug Normalization
+
+From `src/app/api/roles/route.ts:9-11`, role slugs are automatically normalized:
+
+```typescript
+function normalizeRoleSlug(slug: string) {
+  return slug.trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Z0-9_]/g, '_');
+}
+```
+
+<Note>
+Custom role slugs are normalized to uppercase with underscores. For example: "Field Technician" becomes "FIELD_TECHNICIAN".
+</Note>
+
+### Assigning Permissions to Roles
+
+Update role permissions via `PATCH /api/roles`:
+
+```typescript
+await fetch('/api/roles', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roleId: 'role-uuid',
+    permissionIds: [
+      'permission-uuid-1',
+      'permission-uuid-2',
+      'permission-uuid-3'
+    ]
+  })
+});
+```
+
+### Implementation Details
+
+From `src/app/api/roles/route.ts:236-257`:
+
+```typescript
+await prisma.$transaction(async (tx) => {
+  // Remove permissions not in the new list
+  await tx.rolePermission.deleteMany({
+    where: {
+      roleId,
+      permissionId: { notIn: cleanedPermissionIds },
+    },
+  });
+
+  // Add new permissions
+  await tx.rolePermission.createMany({
+    data: cleanedPermissionIds.map((permissionId) => ({
+      roleId,
+      permissionId,
+      grantedBy: authResult.session.user.id,
+    })),
+    skipDuplicates: true,
+  });
+});
+```
+
+## Retrieving User Permissions
+
+### Get User Roles and Permissions
+
+From `src/lib/permissions.ts:3-34`:
+
+```typescript
+export async function getUserRolesAndPermissions(userId: string) {
+  const roleAssignments = await prisma.userRole.findMany({
+    where: { userId, isActive: true },
+    include: {
+      role: {
+        include: {
+          rolePermissions: {
+            include: {
+              permission: {
+                include: {
+                  module: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const roles = roleAssignments.map((a) => a.role.slug);
+  const permissions = roleAssignments.flatMap((a) =>
+    a.role.rolePermissions.map(
+      (rp) => `${rp.permission.module.slug}:${rp.permission.action}`
+    )
+  );
+
+  return {
+    roles,
+    permissions: Array.from(new Set(permissions)),
+  };
+}
+```
+
+## Organization Scoping
+
+### System vs. Organization Roles
+
+Roles can be either:
+
+- **System roles** (`organizationId: null`) - Available across all organizations
+- **Organization roles** (`organizationId: <uuid>`) - Specific to one organization
+
+### Role Deduplication
+
+From `src/app/api/roles/route.ts:95-110`, when listing roles:
+
+```typescript
+const dedupedRolesBySlug = new Map<string, typeof roles[number]>();
+for (const role of roles) {
+  const existing = dedupedRolesBySlug.get(role.slug);
+  if (!existing) {
+    dedupedRolesBySlug.set(role.slug, role);
+    continue;
+  }
+
+  // Prefer organization-specific role over system role
+  const existingMatchesOrg = existing.organizationId === currentOrganizationId;
+  const candidateMatchesOrg = role.organizationId === currentOrganizationId;
+  if (!existingMatchesOrg && candidateMatchesOrg) {
+    dedupedRolesBySlug.set(role.slug, role);
+  }
+}
+```
+
+<Warning>
+When an organization-specific role has the same slug as a system role, the organization role takes precedence for users in that organization.
+</Warning>
+
+## Role Provisioning
+
+### Automatic Role Creation
+
+The `ensureRoleWithPermissions` function (referenced in user creation) automatically creates roles if they don't exist:
+
+```typescript
+import { ensureRoleWithPermissions } from '@/lib/role-provisioning';
+
+const role = await ensureRoleWithPermissions(
+  'USER',
+  organizationId
+);
+```
+
+This ensures that standard roles are available for all organizations without manual setup.
+
+## API Endpoints Reference
+
+### List Roles
+
+```http
+GET /api/roles?organizationId=<uuid>
+```
+
+Returns all roles with their permissions and the complete module/permission catalog.
+
+### Create Role
+
+```http
+POST /api/roles
+Content-Type: application/json
+
+{
+  "name": "Custom Role",
+  "slug": "CUSTOM_ROLE",
+  "description": "Description"
+}
+```
+
+### Update Role Permissions
+
+```http
+PATCH /api/roles
+Content-Type: application/json
+
+{
+  "roleId": "uuid",
+  "permissionIds": ["uuid1", "uuid2"]
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Principle of Least Privilege" icon="shield-halved">
+    Grant users only the permissions they need to perform their job functions.
+  </Card>
+  <Card title="Regular Permission Audits" icon="magnifying-glass">
+    Review role assignments and permissions periodically to ensure they remain appropriate.
+  </Card>
+  <Card title="Use Standard Roles" icon="users">
+    Start with system-defined roles before creating custom ones.
+  </Card>
+  <Card title="Document Custom Roles" icon="file-lines">
+    Maintain clear documentation of why custom roles were created and their intended use.
+  </Card>
+</CardGroup>
+
+## Related Files
+
+- Role definitions: `src/lib/rbac.ts`
+- CASL abilities: `src/lib/ability.ts`
+- Permission helpers: `src/lib/permissions.ts`
+- Role API: `src/app/api/roles/route.ts`
+- Role provisioning: `src/lib/role-provisioning.ts`

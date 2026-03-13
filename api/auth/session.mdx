@@ -1,0 +1,330 @@
+---
+title: 'Session Management'
+description: 'Retrieve and manage authenticated user sessions'
+---
+
+## Overview
+
+SMyEG uses NextAuth.js with JWT-based session management. Sessions contain user identity, roles, permissions, and organization context.
+
+---
+
+## GET /api/auth/session
+
+Retrieve the current authenticated user's session data.
+
+### Request
+
+No request body required. Authentication is handled via HTTP-only session cookies.
+
+### Response
+
+<ResponseField name="user" type="object | null">
+  User session data, or null if not authenticated
+  <ResponseField name="id" type="string">
+    User's unique identifier
+  </ResponseField>
+  <ResponseField name="email" type="string">
+    User's email address
+  </ResponseField>
+  <ResponseField name="name" type="string">
+    User's display name or full name
+  </ResponseField>
+  <ResponseField name="roles" type="string[]">
+    Array of role identifiers assigned to the user
+  </ResponseField>
+  <ResponseField name="permissions" type="string[]">
+    Array of permission identifiers granted to the user
+  </ResponseField>
+  <ResponseField name="organizationId" type="string | null">
+    ID of the user's current organization context
+  </ResponseField>
+  <ResponseField name="organizationName" type="string | null">
+    Name of the user's current organization
+  </ResponseField>
+</ResponseField>
+
+### Session Token Structure
+
+The JWT token includes:
+
+- **id** - User ID from the database
+- **roles** - Array of role slugs/identifiers
+- **permissions** - Array of permission identifiers in format `module:action`
+- **organizationId** - Selected organization for this session
+- **organizationName** - Organization display name
+
+### Cookie Fallback
+
+If no NextAuth session exists, the system checks for an `EmailUsuario` cookie and attempts to create a session from the database.
+
+<Note>
+  Sessions use the JWT strategy, meaning session data is stored in the token itself, not in a database. This improves performance but means session updates require re-authentication.
+</Note>
+
+### Example Request
+
+<CodeGroup>
+
+```bash cURL
+curl https://api.smyeg.com/api/auth/session \
+  -H "Cookie: next-auth.session-token=eyJhbGciOiJIUzI1NiJ9..."
+```
+
+```javascript JavaScript
+const response = await fetch('/api/auth/session', {
+  credentials: 'include', // Important: include cookies
+});
+
+const session = await response.json();
+
+if (session?.user) {
+  console.log('Logged in as:', session.user.email);
+  console.log('Organization:', session.user.organizationName);
+  console.log('Permissions:', session.user.permissions);
+}
+```
+
+```typescript TypeScript - Client Component
+import { useSession } from 'next-auth/react';
+
+export default function UserProfile() {
+  const { data: session, status } = useSession();
+
+  if (status === 'loading') {
+    return <div>Loading...</div>;
+  }
+
+  if (status === 'unauthenticated') {
+    return <div>Please log in</div>;
+  }
+
+  return (
+    <div>
+      <h1>Welcome {session?.user?.name}</h1>
+      <p>Email: {session?.user?.email}</p>
+      <p>Organization: {session?.user?.organizationName}</p>
+      <div>
+        <h2>Your Roles:</h2>
+        <ul>
+          {session?.user?.roles.map((role) => (
+            <li key={role}>{role}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+```
+
+```typescript TypeScript - Server Component
+import { auth } from '@/lib/auth';
+
+export default async function DashboardPage() {
+  const session = await auth();
+
+  if (!session?.user) {
+    redirect('/login');
+  }
+
+  return (
+    <div>
+      <h1>Dashboard for {session.user.organizationName}</h1>
+      <p>User: {session.user.name}</p>
+      <p>User ID: {session.user.id}</p>
+    </div>
+  );
+}
+```
+
+</CodeGroup>
+
+### Example Response
+
+```json Authenticated Session
+{
+  "user": {
+    "id": "usr_123456789",
+    "email": "user@example.com",
+    "name": "Juan Pérez",
+    "roles": [
+      "ADMIN",
+      "FOREST_MANAGER"
+    ],
+    "permissions": [
+      "users:read",
+      "users:write",
+      "forest:read",
+      "forest:write",
+      "analytics:read"
+    ],
+    "organizationId": "org_123456",
+    "organizationName": "Acme Corporation"
+  },
+  "expires": "2026-04-13T00:00:00.000Z"
+}
+```
+
+```json No Session
+{
+  "user": null
+}
+```
+
+---
+
+## Server-Side Session Access
+
+Use the `requireAuth()` helper function to enforce authentication in API routes.
+
+### Usage in API Routes
+
+```typescript TypeScript - API Route
+import { requireAuth, fail, ok } from '@/lib/api-helpers';
+
+export async function GET() {
+  const { session, error } = await requireAuth();
+  
+  if (error) {
+    return error; // Returns 401 Unauthorized
+  }
+
+  // Access user data from session
+  const userId = session.user.id;
+  const organizationId = session.user.organizationId;
+  const permissions = session.user.permissions;
+
+  // Your protected route logic here
+  return ok({ message: 'Protected data' });
+}
+```
+
+### Permission Checking
+
+```typescript TypeScript - Permission Check
+import { requireAuth, requirePermission, ok } from '@/lib/api-helpers';
+
+export async function POST() {
+  const { session, error } = await requireAuth();
+  
+  if (error) {
+    return error;
+  }
+
+  // Check if user has specific permission
+  const permissionError = requirePermission(
+    session.user.permissions,
+    'users', // module slug
+    'write'  // action
+  );
+
+  if (permissionError) {
+    return permissionError; // Returns 403 Forbidden
+  }
+
+  // User has permission, proceed
+  return ok({ message: 'User created' });
+}
+```
+
+### Session Data Flow
+
+1. **JWT Callback**: When user signs in, user data is encoded into JWT token
+2. **Session Callback**: When session is accessed, data is decoded from JWT
+3. **Cookie Fallback**: If NextAuth session doesn't exist, check `EmailUsuario` cookie
+4. **Database Lookup**: For cookie fallback, fetch user and roles from database
+
+<Warning>
+  The `requireAuth()` function has a fallback mechanism using the `EmailUsuario` cookie. This is for backward compatibility but should not be relied upon for new implementations. Always use NextAuth sessions.
+</Warning>
+
+---
+
+## POST /api/auth/signout
+
+Sign out the current user and clear their session.
+
+### Request
+
+No request body required.
+
+### Response
+
+Redirects to the sign-in page (`/login`) or returns success response.
+
+### Example Usage
+
+<CodeGroup>
+
+```typescript TypeScript - Client Component
+import { signOut } from 'next-auth/react';
+
+export default function LogoutButton() {
+  const handleLogout = async () => {
+    await signOut({
+      callbackUrl: '/login',
+      redirect: true,
+    });
+  };
+
+  return <button onClick={handleLogout}>Sign Out</button>;
+}
+```
+
+```typescript TypeScript - Server Action
+import { signOut } from '@/lib/auth';
+
+export async function logout() {
+  await signOut({ redirectTo: '/login' });
+}
+```
+
+```bash cURL
+curl -X POST https://api.smyeg.com/api/auth/signout \
+  -H "Cookie: next-auth.session-token=eyJhbGciOiJIUzI1NiJ9..."
+```
+
+</CodeGroup>
+
+---
+
+## Session Configuration
+
+The session is configured with the following settings:
+
+- **Strategy**: JWT (token-based, no database storage)
+- **Trust Host**: Enabled for proxy/load balancer compatibility
+- **Sign-In Page**: `/login`
+- **Token Lifetime**: Default NextAuth expiration (30 days)
+
+### Type Definitions
+
+```typescript TypeScript - Session Types
+import 'next-auth';
+
+declare module 'next-auth' {
+  interface User {
+    id: string;
+    email: string;
+    name: string;
+    roles: string[];
+    permissions: string[];
+    organizationId: string | null;
+    organizationName: string | null;
+  }
+
+  interface Session {
+    user: User;
+  }
+}
+
+declare module 'next-auth/jwt' {
+  interface JWT {
+    id: string;
+    roles: string[];
+    permissions: string[];
+    organizationId: string | null;
+    organizationName: string | null;
+  }
+}
+```

@@ -1,0 +1,366 @@
+---
+title: 'User Management'
+description: 'API endpoints for managing users in the SMyEG system'
+---
+
+## Authentication
+
+All user management endpoints require authentication. Users must have one of the following:
+- `ADMIN` or `SUPER_ADMIN` role
+- Explicit `users:READ`, `users:CREATE`, `users:UPDATE`, or `users:DELETE` permissions
+
+## List Users
+
+<RequestExample>
+```bash
+GET /api/users
+```
+</RequestExample>
+
+Retrieves a paginated list of users with filtering and search capabilities.
+
+### Query Parameters
+
+<ParamField query="page" type="number" default="1">
+  Page number for pagination
+</ParamField>
+
+<ParamField query="limit" type="number" default="25">
+  Number of items per page
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search term to filter by email, first name, or last name (case-insensitive)
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by user status: `ACTIVE`, `INACTIVE`, `LOCKED`, `PENDING_VERIFICATION`, or `DELETED`
+</ParamField>
+
+<ParamField query="role" type="string">
+  Filter by role slug (e.g., `ADMIN`, `USER`)
+</ParamField>
+
+<ParamField query="organizationId" type="string">
+  Filter by organization ID (SUPER_ADMIN only)
+</ParamField>
+
+<ParamField query="sortBy" type="string">
+  Sort field: `email`, `status`, or `createdAt`
+</ParamField>
+
+<ParamField query="sortOrder" type="string" default="desc">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of user objects
+  
+  <ResponseField name="id" type="string">
+    User ID
+  </ResponseField>
+  
+  <ResponseField name="email" type="string">
+    User email address
+  </ResponseField>
+  
+  <ResponseField name="firstName" type="string">
+    User's first name
+  </ResponseField>
+  
+  <ResponseField name="lastName" type="string">
+    User's last name
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    User status
+  </ResponseField>
+  
+  <ResponseField name="organizationId" type="string">
+    Associated organization ID
+  </ResponseField>
+  
+  <ResponseField name="userRoles" type="array">
+    Array of active user roles with role details
+  </ResponseField>
+  
+  <ResponseField name="organization" type="object">
+    Organization details
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata
+  
+  <ResponseField name="total" type="number">
+    Total number of items
+  </ResponseField>
+  
+  <ResponseField name="page" type="number">
+    Current page number
+  </ResponseField>
+  
+  <ResponseField name="limit" type="number">
+    Items per page
+  </ResponseField>
+  
+  <ResponseField name="totalPages" type="number">
+    Total number of pages
+  </ResponseField>
+</ResponseField>
+
+## Create User
+
+<RequestExample>
+```bash
+POST /api/users
+```
+</RequestExample>
+
+Creates a new user in the system.
+
+### Request Body
+
+<ParamField body="email" type="string" required>
+  User's email address (must be unique)
+</ParamField>
+
+<ParamField body="firstName" type="string">
+  User's first name
+</ParamField>
+
+<ParamField body="lastName" type="string">
+  User's last name
+</ParamField>
+
+<ParamField body="organizationId" type="string" required>
+  Organization to associate the user with
+</ParamField>
+
+<ParamField body="roleSlug" type="string" required>
+  Role to assign to the user
+</ParamField>
+
+<ParamField body="password" type="string">
+  Initial password. If not provided, a random password is generated and user status is set to `PENDING_VERIFICATION`
+</ParamField>
+
+### Response
+
+Returns the created user object with status code `201`.
+
+### Notes
+
+- If a password is provided, user status is set to `ACTIVE`
+- If no password is provided, a random password is generated and user status is set to `PENDING_VERIFICATION`
+- An audit log entry is created for the user creation
+
+## Get User by ID
+
+<RequestExample>
+```bash
+GET /api/users/{id}
+```
+</RequestExample>
+
+Retrieves detailed information about a specific user.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  User ID
+</ParamField>
+
+### Response
+
+Returns the user object including:
+- User details (email, firstName, lastName, status)
+- Active user roles with role information
+- User profile data
+
+## Update User
+
+<RequestExample>
+```bash
+PATCH /api/users/{id}
+```
+</RequestExample>
+
+Updates an existing user's information.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  User ID
+</ParamField>
+
+### Request Body
+
+<ParamField body="firstName" type="string">
+  Updated first name
+</ParamField>
+
+<ParamField body="lastName" type="string">
+  Updated last name
+</ParamField>
+
+<ParamField body="status" type="string">
+  Updated status: `ACTIVE`, `INACTIVE`, `LOCKED`, `PENDING_VERIFICATION`, or `DELETED`
+</ParamField>
+
+<ParamField body="organizationId" type="string">
+  Updated organization ID
+</ParamField>
+
+<ParamField body="roleSlug" type="string">
+  New role to assign (deactivates previous roles)
+</ParamField>
+
+### Response
+
+Returns the updated user object with active roles and organization details.
+
+### Notes
+
+- When changing roles, previous active roles are deactivated
+- An audit log entry is created for the update
+
+## Delete User
+
+<RequestExample>
+```bash
+DELETE /api/users/{id}
+```
+</RequestExample>
+
+Performs a soft delete on a user account.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  User ID
+</ParamField>
+
+### Response
+
+Returns a success message indicating the user was logically deleted.
+
+### Notes
+
+- This is a soft delete operation
+- User status is set to `DELETED`
+- Email is anonymized with pattern `deleted_{timestamp}_{id}@invalid.local`
+- All active sessions are revoked
+- An audit log entry is created
+
+## Import Users
+
+<RequestExample>
+```bash
+POST /api/users/import
+```
+</RequestExample>
+
+Bulk imports users from a CSV or XLSX file.
+
+### Request
+
+Multipart form data with a file upload.
+
+<ParamField body="file" type="file" required>
+  CSV or XLSX file containing user data
+</ParamField>
+
+### File Format
+
+Required columns:
+- `email` - User email address
+- `roleSlug` (or `role`, `rol`) - Role identifier
+
+Optional columns:
+- `firstName` (or `nombres`, `nombre`) - First name
+- `lastName` (or `apellidos`, `apellido`) - Last name
+- `password` (or `contrasena`, `contraseña`) - Password
+- `organizationId` (or `organization`, `organizacion`) - Organization reference (ID, name, or slug)
+
+### Response
+
+<ResponseField name="created" type="number">
+  Number of users successfully created
+</ResponseField>
+
+<ResponseField name="updated" type="number">
+  Number of existing users updated
+</ResponseField>
+
+<ResponseField name="skipped" type="number">
+  Number of rows skipped due to errors
+</ResponseField>
+
+<ResponseField name="errors" type="array">
+  Array of error objects with row number, email, and error message
+</ResponseField>
+
+### Notes
+
+- Supports both CSV and XLSX formats
+- Existing users (matched by email) are updated instead of creating duplicates
+- Non-SUPER_ADMIN users can only import users to their own organization
+- Organization can be referenced by ID, name, or slug
+
+## Export Users
+
+<RequestExample>
+```bash
+GET /api/users/export?format=csv
+```
+</RequestExample>
+
+Exports users to CSV or XLSX format.
+
+### Query Parameters
+
+<ParamField query="format" type="string" default="csv">
+  Export format: `csv` or `xlsx`
+</ParamField>
+
+<ParamField query="limit" type="number" default="100">
+  Maximum number of users to export (capped by `USERS_EXPORT_MAX_LIMIT` env variable, default 5000)
+</ParamField>
+
+<ParamField query="search" type="string">
+  Filter by email, first name, or last name
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by user status
+</ParamField>
+
+<ParamField query="role" type="string">
+  Filter by role slug
+</ParamField>
+
+<ParamField query="organizationId" type="string">
+  Filter by organization (SUPER_ADMIN only)
+</ParamField>
+
+<ParamField query="sortBy" type="string">
+  Sort field: `email`, `status`, or `createdAt`
+</ParamField>
+
+<ParamField query="sortOrder" type="string" default="desc">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+### Response
+
+Returns a downloadable file in the requested format.
+
+### Notes
+
+- Requires `users:EXPORT` permission (or ADMIN/SUPER_ADMIN role)
+- Maximum export limit can be configured via `USERS_EXPORT_MAX_LIMIT` environment variable
+- CSV includes headers: email, firstName, lastName, status, roleSlug, organizationId, organizationName, createdAt
+- XLSX uses Spanish column headers for better localization
